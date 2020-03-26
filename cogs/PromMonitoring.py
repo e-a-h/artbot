@@ -6,6 +6,7 @@ from discord.ext import commands
 from prometheus_client.exposition import generate_latest
 
 from cogs.BaseCog import BaseCog
+from utils import Logging
 
 
 class PromMonitoring(BaseCog):
@@ -36,16 +37,20 @@ class PromMonitoring(BaseCog):
         (m.own_message_raw_count if message.author.id == self.bot.user.id else m.bot_message_raw_count if message.author.bot else m.user_message_raw_count).inc()
 
     async def create_site(self):
-        await asyncio.sleep(15)
+        await asyncio.sleep(5)
+        print("starting metrics server")
+        # try:
         metrics_app = web.Application()
         metrics_app.add_routes([web.get("/metrics", self.serve_metrics)])
 
         runner = web.AppRunner(metrics_app)
         await self.bot.loop.create_task(runner.setup())
-        site = web.TCPSite(runner)
+        site = web.TCPSite(runner, port=28081, host='localhost')
         await site.start()
 
         self.metric_server = site
+        # except Exception as e:
+        #     await Logging.bot_log("prom monitoring not active")
 
     async def serve_metrics(self, request):
         metrics_to_server = generate_latest(self.bot.metrics_reg).decode("utf-8")

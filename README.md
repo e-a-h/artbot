@@ -16,3 +16,9 @@ Art [Bot] for artprof.org discord
      * **@everyone:** -read
      * **members:** +read
 1. Config file required. see config.example.json and fill in channel IDs, guild ID, role IDs, SQL creds
+1. Issue some bot commands once the bot is up and running
+   * `?chanconf set log_channel 000000000000000000`
+   * `?chanconf set welcome_channel 000000000000000000`
+   * `?chanconf set entry_channel 000000000000000000`
+   * `?chanconf set rules_channel 000000000000000000`
+   * `?set_rules_message 000000000000000000`

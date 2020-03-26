@@ -186,14 +186,14 @@ class Welcomer(BaseCog):
             return False
 
         try:
-            welcome_channel = self.bot.get_config_channel(guild.id, Utils.welcome_channel)
-            rules_channel = self.bot.get_config_channel(guild.id, Utils.rules_channel)
+            welcome_channel = self.bot.get_config_channel(member.guild.id, Utils.welcome_channel)
+            rules_channel = self.bot.get_config_channel(member.guild.id, Utils.rules_channel)
 
             if welcome_channel and rules_channel:
                 txt = Lang.get_string("welcome/welcome_msg",
                                       user=member.mention,
                                       rules_channel=rules_channel.mention,
-                                      accept_emoji=Emoji.get_chat_emoji('CANDLE'))
+                                      accept_emoji=Emoji.get_chat_emoji('PAINTBRUSH'))
                 if self.mute_new_members:
                     # add mute notification if mute for new members is on
                     mute_txt = Lang.get_string("welcome/welcome_mute_msg")
