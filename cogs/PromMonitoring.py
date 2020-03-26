@@ -39,7 +39,6 @@ class PromMonitoring(BaseCog):
     async def create_site(self):
         await asyncio.sleep(5)
         print("starting metrics server")
-        # try:
         metrics_app = web.Application()
         metrics_app.add_routes([web.get("/metrics", self.serve_metrics)])
 
@@ -49,8 +48,6 @@ class PromMonitoring(BaseCog):
         await site.start()
 
         self.metric_server = site
-        # except Exception as e:
-        #     await Logging.bot_log("prom monitoring not active")
 
     async def serve_metrics(self, request):
         metrics_to_server = generate_latest(self.bot.metrics_reg).decode("utf-8")

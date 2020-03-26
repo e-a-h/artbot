@@ -1,52 +1,42 @@
-/* Fill in details and REMOVE ALL COMMENTS */
 {
     "ADMINS": [
-        /* list of IDs of users allowed to admin the bot */
+        295762764234752000
     ],
-    "token": "",
-    "SENTRY_DSN": "your discord bot token goes here",
-    "bot_prefix": "!", // choose any string that doesn't conflict with other bots present e.g. "z!"
-    "DATABASE_NAME": "sky",
-    "DATABASE_USER": "db_user",
-    "DATABASE_PASS": "db_user_password",
     "DATABASE_HOST": "localhost",
+    "DATABASE_NAME": "artprof",
+    "DATABASE_PASS": "",
     "DATABASE_PORT": 3306,
-    "channels": {
-        "android_beta":  0,
-        "android_stable":  0,
-        "ios_beta":  0,
-        "ios_stable":  0
-    },
-    "EMOJI": {
-        /* custom emoji overrides. see utils/Emoji.py for defaults that can be overriden */
-        "NO": 624094243371352084,
-        "YES": 624094243329146900
-    },
-    "question_timeout_seconds": 300,
-    "bug_maintenance_channel": 0,
-    "bug_trash_sweep_minutes": 40,
-    "max_attachments": 3,
-    "log_channel": 0,
-    "rules_react_message_id": 0,
-    "welcome_channel": 0,
+    "DATABASE_USER": "",
+    "EMOJI": {},
+    "SENTRY_DSN": "",
+    "admin_roles": [
+        689888641207763075
+    ],
+    "bot_prefix": "?",
     "cogs": [
-        /* list of cogs to load */
         "Basic",
+        "ChannelConfig",
+        "PromMonitoring",
         "Reload",
         "Welcomer",
-        "Eden",
         "CustCommands",
         "AutoResponders",
-        "ChannelConfig",
-        "Music"
+        "Sweepstakes",
+        "WordCounter",
+        "ArtCollector",
+        "ReactMonitor"
     ],
-     "roles": {
-         /* reaction:role associations */
-        "\uD83D\uDD6F": 0
+    "guild_id": 689885586345033894,
+    "log_channel": 692123567034204312,
+    "max_attachments": 3,
+    "member_role": 689889208630116447,
+    "muted_role": 689893812310507529,
+    "nonmember_role": 692498702627110983,
+    "question_timeout_seconds": 300,
+    "roles": {
+        "\ud83d\udd8c\ufe0f": 689889208630116447
     },
-    "admin_roles": [],
-    "member_role": 0,
-    "muted_role": 0,
-    "nonmember_role": 0,
-    "guild_id": 0,
+    "rules_react_message_id": 692527700660715560,
+    "token": "",
+    "welcome_channel": 689890892659687435
 }
