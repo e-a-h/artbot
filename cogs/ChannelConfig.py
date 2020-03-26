@@ -1,3 +1,4 @@
+from __future__ import absolute_import
 import discord
 from discord.ext import commands
 
