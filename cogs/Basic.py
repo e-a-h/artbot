@@ -1,4 +1,3 @@
-from __future__ import absolute_import
 import time
 
 from discord.ext.commands import Cog, command, Context

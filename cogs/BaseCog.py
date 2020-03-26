@@ -1,4 +1,3 @@
-from __future__ import absolute_import
 from discord.ext.commands import Cog
 
 from artbot import Artbot

@@ -1,4 +1,3 @@
-from __future__ import absolute_import
 from peewee import MySQLDatabase, Model, PrimaryKeyField, BigIntegerField, CharField, ForeignKeyField, AutoField, \
     TimestampField, SmallIntegerField, BooleanField
 
