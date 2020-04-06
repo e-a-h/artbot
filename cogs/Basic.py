@@ -1,6 +1,6 @@
 import time
 
-from discord.ext.commands import Cog, command, Context
+from discord.ext.commands import command, Context
 
 from cogs.BaseCog import BaseCog
 
