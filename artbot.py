@@ -57,7 +57,8 @@ class Artbot(Bot):
             Logging.info("Shutting down...")
             self.shutting_down = True
             await Logging.bot_log(f"Artbot shutting down!")
-            self.db_keepalive.cancel()
+            if self.db_keepalive:
+                self.db_keepalive.cancel()
             temp = []
             for cog in self.cogs:
                 temp.append(cog)

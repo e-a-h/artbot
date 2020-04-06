@@ -14,11 +14,15 @@ class PromMonitoring(BaseCog):
     def __init__(self, bot):
         super().__init__(bot)
         self.running = True
-        self.bot.loop.create_task(self.create_site())
+        self.metric_server = None
+        self.start_metrics = self.bot.loop.create_task(self.create_site())
 
     def cog_unload(self):
         self.running = False
-        self.bot.loop.create_task(self.metric_server.stop())
+        if self.metric_server:
+            self.bot.loop.create_task(self.metric_server.stop())
+        else:
+            self.start_metrics.cancel()
 
     @commands.Cog.listener()
     async def on_command_completion(self, ctx):
@@ -38,7 +42,7 @@ class PromMonitoring(BaseCog):
 
     async def create_site(self):
         await asyncio.sleep(5)
-        print("starting metrics server")
+        Logging.info("starting metrics server")
         metrics_app = web.Application()
         metrics_app.add_routes([web.get("/metrics", self.serve_metrics)])
 
