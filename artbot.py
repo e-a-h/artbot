@@ -5,7 +5,7 @@ import sentry_sdk
 from discord.ext import commands
 from discord.ext.commands import Bot
 from aiohttp import ClientOSError, ServerDisconnectedError
-from discord import ConnectionClosed, Embed, Colour
+from discord import ConnectionClosed, Intents, Embed, Colour
 from prometheus_client import CollectorRegistry
 from sentry_sdk.integrations.aiohttp import AioHttpIntegration
 
@@ -130,8 +130,9 @@ if __name__ == '__main__':
     Database.init()
 
     loop = asyncio.get_event_loop()
+    intents = Intents(members=True, messages=True, guilds=True, bans=True, emojis=True, presences=True, reactions=True)
 
-    artbot = Artbot(command_prefix=Configuration.get_var("bot_prefix"), case_insensitive=True, loop=loop)
+    artbot = Artbot(command_prefix=Configuration.get_var("bot_prefix"), case_insensitive=True, intents=intents, loop=loop)
     artbot.remove_command("help")
 
     Utils.BOT = artbot
