@@ -492,6 +492,21 @@ class Welcomer(BaseCog):
         await ctx.send(content)
 
     @commands.Cog.listener()
+    async def on_member_update(self, before, after):
+        if before.pending and not after.pending:
+            # member just accepted rules
+
+            # don't add a role or this defeats the cool-down.
+            # wait for member to talk, then add a role.
+
+            # TODO: metrics logging
+
+            # member_role = after.guild.get_role(Configuration.get_var("member_role"))
+            # await after.add_roles(member_role)
+            # print(f"{after.display_name} is a member now")
+            pass
+
+    @commands.Cog.listener()
     async def on_member_remove(self, member):
         # clear rules reactions
         roles = Configuration.get_var("roles")
@@ -704,11 +719,15 @@ I won't try to unmute them later.
             # message from regular member. no action for welcomer to take.
             return
 
+        # ignore when channels not configured
         if not welcome_channel or not rules_channel or message.channel.id != welcome_channel.id:
-            # ignore when channels not configured
-            # Only act on messages in welcome channel from here on
+            if member_role not in message.author.roles:
+                # nonmember speaking somewhere other than welcome channel? Maybe we're not using the
+                # welcome channel anymore? or something else went wrong... give them member role.
+                await message.author.add_roles(member_role)
             return
 
+        # Only act on messages in welcome channel from here on
         # Nonmember will only be warned once every 10 minutes that they are speaking in welcome channel
         now = datetime.now().timestamp()
         then = 0
