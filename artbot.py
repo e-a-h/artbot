@@ -118,6 +118,10 @@ def before_send(event, hint):
     return event
 
 
+def can_help(ctx):
+    return ctx.author.guild_permissions.mute_members
+
+
 if __name__ == '__main__':
     Logging.init()
     Logging.info("Launching artprofbot!")
@@ -133,7 +137,7 @@ if __name__ == '__main__':
     intents = Intents(members=True, messages=True, guilds=True, bans=True, emojis=True, presences=True, reactions=True)
 
     artbot = Artbot(command_prefix=Configuration.get_var("bot_prefix"), case_insensitive=True, intents=intents, loop=loop)
-    artbot.remove_command("help")
+    artbot.help_command = commands.DefaultHelpCommand(command_attrs=dict(name='halp', checks=[can_help]))
 
     Utils.BOT = artbot
 

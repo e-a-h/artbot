@@ -111,7 +111,7 @@ class Welcomer(BaseCog):
                     continue
 
     async def cog_check(self, ctx):
-        if not hasattr(ctx.author, 'guild'):
+        if ctx.guild is None:
             return False
         return ctx.author.guild_permissions.ban_members
 
@@ -238,7 +238,8 @@ class Welcomer(BaseCog):
     @commands.guild_only()
     async def welcome(self, ctx):
         """Configure welcome message settings"""
-        await ctx.send(Lang.get_string('welcome/help'))
+        if not ctx.invoked_subcommand:
+            await ctx.send_help(ctx.command)
 
     @welcome.command(aliases=['configmute', 'muteconfig', 'configure_mute', 'mute_configure', 'mute'])
     @commands.guild_only()
@@ -493,17 +494,33 @@ class Welcomer(BaseCog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
-        if before.pending and not after.pending:
-            # member just accepted rules
+        try:
+            if before.pending and not after.pending:
+                # member just accepted rules
 
-            # don't add a role or this defeats the cool-down.
-            # wait for member to talk, then add a role.
+                # don't add a role or this defeats the cool-down.
+                # wait for member to talk, then add a role.
 
-            # TODO: metrics logging
+                # TODO: metrics logging
 
-            # member_role = after.guild.get_role(Configuration.get_var("member_role"))
-            # await after.add_roles(member_role)
-            # print(f"{after.display_name} is a member now")
+                # member_role = after.guild.get_role(Configuration.get_var("member_role"))
+                # await after.add_roles(member_role)
+                # print(f"{after.display_name} is a member now")
+                pass
+        except Exception as e:
+            pass
+
+        try:
+            # Enforce member role on any role changes - in case other bot assigns a role.
+            # TODO: should this be configurable on|off?
+            member_role = before.guild.get_role(Configuration.get_var("member_role"))
+            member_before = member_role in before.roles
+            member_after = member_role in after.roles
+
+            if before.roles != after.roles:
+                if (not member_before and not member_after) or (member_before and not member_after):
+                    await after.add_roles(member_role)
+        except Exception as e:
             pass
 
     @commands.Cog.listener()
@@ -529,16 +546,13 @@ class Welcomer(BaseCog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
-        if self.mute_new_members:
+        if self.mute_new_members and not self.discord_verification_flow[member.guild.id]:
             self.bot.loop.create_task(self.mute_new_member(member))
 
-        if self.discord_verification_flow:
+        if self.discord_verification_flow[member.guild.id]:
             # do not welcome new members when using discord verification
             # set entry_channel to use discord verification
             return
-
-        # TODO: check for rules reaction here for the case of returning member?
-        #  remove it, *or* automatically reinstate member role
 
         # Only send welcomes for configured guild i.e. sky official
         # TODO: retool to allow any guild to welcome members?
@@ -639,34 +653,37 @@ class Welcomer(BaseCog):
         if message_id and not rules_channel:
             ctx.send('Rules channel must be set in order to set rules message. Try `!channel_config set rules_channel [id]`')
 
+        # clear old reactions
+        rules_message_id = Configuration.get_var('rules_react_message_id')
+        try:
+            # Un-setting rules message. Clear reactions from the old one.
+            old_rules = await rules_channel.fetch_message(rules_message_id)
+            await old_rules.clear_reactions()
+            await ctx.send(f"Cleared reactions from:\n{old_rules.jump_url}")
+            # TODO: make this guild-specific
+        except Exception as e:
+            await ctx.send(f"Failed to clear existing rules reactions")
+
+        try:
+            Configuration.MASTER_CONFIG['rules_react_message_id'] = message_id
+            Configuration.save()
+        except Exception as e:
+            await ctx.send(f"Failed while saving configuration. Operation will continue, but check the logs...")
+
         if message_id == 0:
-            rules_message_id = Configuration.get_var('rules_react_message_id')
             if rules_message_id == 0:
                 await ctx.send(f"Rules message is already unset")
-                return
-            try:
-                # Un-setting rules message. Clear reactions from the old one.
-                rules = await rules_channel.fetch_message(rules_message_id)
-                await rules.clear_reactions()
-                await ctx.send(f"Cleared reactions from:\n{rules.jump_url}")
-                Configuration.MASTER_CONFIG['rules_react_message_id'] = message_id
-                Configuration.save()
-            except Exception as e:
-                await ctx.send(f"Failed to clear existing rules reactions")
             return
 
         try:
-            rules = await rules_channel.fetch_message(message_id)
-            # TODO: make this guild-specific
-            Configuration.MASTER_CONFIG['rules_react_message_id'] = message_id
-            Configuration.save()
+            new_rules = await rules_channel.fetch_message(message_id)
             roles = Configuration.get_var("roles")
-            await rules.clear_reactions()
+            await new_rules.clear_reactions()
             for emoji, role_id in roles.items():
                 # if not Emoji.is_emoji_defined(emoji):
                 #     continue
                 # emoji = Emoji.get_chat_emoji(emoji)
-                await rules.add_reaction(emoji)
+                await new_rules.add_reaction(emoji)
             await ctx.send(f"Rules message set to {message_id} in channel {rules_channel.mention}")
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
             await ctx.send(f"Could not find message id {message_id} in channel {rules_channel.mention}")
@@ -687,13 +704,14 @@ class Welcomer(BaseCog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if (message.author == self.bot.user) or not message.guild or message.author.guild_permissions.mute_members:
+        if message.author.bot or not hasattr(message.author, "guild"):
             return
 
         welcome_channel = self.bot.get_config_channel(message.guild.id, Utils.welcome_channel)
         rules_channel = self.bot.get_config_channel(message.guild.id, Utils.rules_channel)
         log_channel = self.bot.get_config_channel(message.guild.id, Utils.log_channel)
         member_role = message.guild.get_role(Configuration.get_var("member_role"))
+        nonmember_role = message.guild.get_role(Configuration.get_var("nonmember_role"))
 
         if message.author.id == 349977940198555660:  # is gearbot
             pattern = re.compile(r'\(``(\d+)``\) has re-joined the server before their mute expired')
@@ -706,16 +724,16 @@ class Welcomer(BaseCog):
                 muted_member_name = Utils.get_member_log_name(muted_member)
                 await log_channel.send(
                     f'''
-Gearbot re-applied mute when member re-joined: {muted_member_name}
-I won't try to unmute them later.
-''')
+                    Gearbot re-applied mute when member re-joined: {muted_member_name}
+                    I won't try to unmute them later.
+                    ''')
                 return
 
-        if await self.member_verify_action(message):
-            # verification flow triggered. no further processing
-            return
-
-        if member_role in message.author.roles:
+        if message.author.guild_permissions.mute_members or \
+                await self.member_verify_action(message) or \
+                member_role in message.author.roles:
+            # is a mod or
+            # verification flow triggered. no further processing or
             # message from regular member. no action for welcomer to take.
             return
 
@@ -724,7 +742,18 @@ I won't try to unmute them later.
             if member_role not in message.author.roles:
                 # nonmember speaking somewhere other than welcome channel? Maybe we're not using the
                 # welcome channel anymore? or something else went wrong... give them member role.
-                await message.author.add_roles(member_role)
+                try:
+                    await message.author.add_roles(member_role)
+                    if nonmember_role in message.author.roles:
+                        Logging.info(f"{Utils.get_member_log_name(message.author)} - had shadow role when speaking. removing it!")
+                        await message.author.remove_roles(nonmember_role)
+                except Exception as e:
+                    try:
+                        Logging.info(f"message: {message.content}")
+                        Logging.info(f"author id: {message.author.id}")
+                    except Exception as ee:
+                        pass
+                    await Utils.handle_exception("member join exception", self.bot, e)
             return
 
         # Only act on messages in welcome channel from here on
