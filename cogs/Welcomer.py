@@ -546,10 +546,10 @@ class Welcomer(BaseCog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
-        if self.mute_new_members and not self.discord_verification_flow[member.guild.id]:
+        if self.mute_new_members and not self.discord_verification_flow:
             self.bot.loop.create_task(self.mute_new_member(member))
 
-        if self.discord_verification_flow[member.guild.id]:
+        if self.discord_verification_flow:
             # do not welcome new members when using discord verification
             # set entry_channel to use discord verification
             return
