@@ -18,9 +18,10 @@ class Sweepstakes(BaseCog):
         super().__init__(bot)
 
     async def cog_check(self, ctx):
-        if not hasattr(ctx.author, 'guild'):
+        if ctx.guild is None:
             return False
-        # TODO: should this be admin and/or custom role? PermissionViewSweepstakes, PermissionManageSweepstakes
+        # TODO: change to admin role
+        #  and/or separate roles for view and manage sweeps
         return ctx.author.guild_permissions.manage_channels
 
     async def get_reaction_message(self, ctx, jump_url):
@@ -29,7 +30,7 @@ class Sweepstakes(BaseCog):
             channel_id = parts[-2]
             message_id = parts[-1]
         except IndexError as e:
-            await ctx.send(Lang.get_string('sweeps/jumpurl_prompt'))
+            await ctx.send(Lang.get_locale_string('sweeps/jumpurl_prompt', ctx))
             return
 
         try:
@@ -37,8 +38,8 @@ class Sweepstakes(BaseCog):
             message = await channel.fetch_message(message_id)
             return message
         except Exception as e:
-            await Utils.handle_exception(f"Failed to get message {channel_id}/{message_id}", self, e)
-            await ctx.send(Lang.get_string('sweeps/fetch_message_failed', channel_id=channel_id, message_id=message_id))
+            await Utils.handle_exception(f"Failed to get message {channel_id}/{message_id}", self.bot, e)
+            await ctx.send(Lang.get_locale_string('sweeps/fetch_message_failed', ctx, channel_id=channel_id, message_id=message_id))
 
     async def get_unique_react_users(self, message: Message):
         fields = ["id", "nick", "username", "discriminator", "mention", "left_guild"]
@@ -98,10 +99,10 @@ class Sweepstakes(BaseCog):
         message_id = message.id
         try:
             unique_users = await self.get_unique_react_users(message)
-            await ctx.send(Lang.get_string('sweeps/unique_result', count=len(unique_users['data'])))
+            await ctx.send(Lang.get_locale_string('sweeps/unique_result', ctx, count=len(unique_users['data'])))
             await self.send_csv(ctx, unique_users['fields'], unique_users['data'])
         except Exception as e:
-            await Utils.handle_exception(f"Failed to get entries {channel_id}/{message_id}", self, e)
+            await Utils.handle_exception(f"Failed to get entries {channel_id}/{message_id}", self.bot, e)
             await ctx.send(f"Failed to get entries {channel_id}/{message_id}")
 
     async def fetch_all(self, ctx: Context, message: Message):
@@ -109,11 +110,11 @@ class Sweepstakes(BaseCog):
         message_id = message.id
         try:
             reactions = await self.get_all_react_users(message)
-            await ctx.send(Lang.get_string('sweeps/total_entries', count=len(reactions['data'])))
+            await ctx.send(Lang.get_locale_string('sweeps/total_entries', ctx, count=len(reactions['data'])))
             await self.send_csv(ctx, reactions['fields'], reactions['data'])
         except Exception as e:
-            await Utils.handle_exception(f"Failed to get entries {channel_id}/{message_id}", self, e)
-            await ctx.send(Lang.get_string('sweeps/fetch_entries_failed', channel_id=channel_id, message_id=message_id))
+            await Utils.handle_exception(f"Failed to get entries {channel_id}/{message_id}", self.bot, e)
+            await ctx.send(Lang.get_locale_string('sweeps/fetch_entries_failed', ctx, channel_id=channel_id, message_id=message_id))
 
     async def send_csv(self, ctx, fields: list, data: tuple):
         now = datetime.today().timestamp()
@@ -131,15 +132,15 @@ class Sweepstakes(BaseCog):
     @commands.bot_has_permissions(embed_links=True)
     async def sweepstakes(self, ctx: commands.Context):
         """sweeps help"""
-        if ctx.invoked_subcommand is None:
-            await ctx.send(Lang.get_string('sweeps/help'))
+        if not ctx.invoked_subcommand:
+            await ctx.send_help(ctx.command)
 
     @sweepstakes.group(name="entries")
     @commands.guild_only()
     async def entries(self, ctx: commands.Context):
         """reporting group"""
         if ctx.invoked_subcommand is None:
-            await ctx.send(Lang.get_string('sweeps/entries_sub_command'))
+            await ctx.send(Lang.get_locale_string('sweeps/entries_sub_command', ctx))
 
     @sweepstakes.group(name="end", aliases=["cancel", "stop"])
     @commands.guild_only()
@@ -147,7 +148,7 @@ class Sweepstakes(BaseCog):
         """reporting group"""
         # TODO: add sub-commands for ending, with reaction clear, restarting with reaction reset to only author
         if ctx.invoked_subcommand is None:
-            await ctx.send(Lang.get_string('sweeps/end_sweeps_sub_command'))
+            await ctx.send(Lang.get_locale_string('sweeps/end_sweeps_sub_command', ctx))
 
     @end_sweeps.command(aliases=["clean", "clear"])
     @commands.guild_only()
@@ -156,13 +157,15 @@ class Sweepstakes(BaseCog):
         try:
             await self.fetch_unique(ctx, message)
             await self.fetch_all(ctx, message)
-            pending = await ctx.send(Lang.get_string('sweeps/removing_reactions'))
+            pending = await ctx.send(Lang.get_locale_string('sweeps/removing_reactions', ctx))
             await message.clear_reactions()
             await pending.delete()
         except Exception as e:
-            await Utils.handle_exception(f"Failed to clear reactions {message.channel.id}/{message.id}", self, e)
+            msg = f"Failed to clear reactions {message.channel.id}/{message.id}"
+            await ctx.send(msg)
+            await Utils.handle_exception(msg, self.bot, e)
             raise e
-        await ctx.send(Lang.get_string('sweeps/drawing_closed'))
+        await ctx.send(Lang.get_locale_string('sweeps/drawing_closed', ctx))
 
     @end_sweeps.command(aliases=["reset", "restart"])
     @commands.guild_only()
@@ -171,7 +174,7 @@ class Sweepstakes(BaseCog):
 
         if not message.reactions:
             # no reactions to reset
-            await ctx.send(Lang.get_string('sweeps/no_reactions'))
+            await ctx.send(Lang.get_locale_string('sweeps/no_reactions', ctx))
             return
 
         # gather all emojis from message reactions
@@ -193,15 +196,15 @@ class Sweepstakes(BaseCog):
             clear = False
 
         async def yes():
-            await ctx.send(Lang.get_string('sweeps/invalid_emoji_confirm', count=len(not_my_emoji)))
+            await ctx.send(Lang.get_locale_string('sweeps/invalid_emoji_confirm', ctx, count=len(not_my_emoji)))
 
         if not_my_emoji:
             # some emoji on the original message that I can't access
             if not my_emoji:
                 # no emoji left that I can add back.
-                prompt = Lang.get_string('sweeps/all_invalid_emoji')
+                prompt = Lang.get_locale_string('sweeps/all_invalid_emoji', ctx)
             else:
-                prompt = Lang.get_string('sweeps/some_invalid_emoji')
+                prompt = Lang.get_locale_string('sweeps/some_invalid_emoji', ctx)
 
             try:
                 await Questions.ask(self.bot,
@@ -211,7 +214,7 @@ class Sweepstakes(BaseCog):
                                     [
                                         Questions.Option('YES', handler=yes),
                                         Questions.Option('NO', handler=no)
-                                    ], delete_after=True)
+                                    ], delete_after=True, locale=ctx)
             except asyncio.TimeoutError:
                 return
 
@@ -220,14 +223,14 @@ class Sweepstakes(BaseCog):
             await self.fetch_unique(ctx, message)
             await self.fetch_all(ctx, message)
 
-            pending = await ctx.send(Lang.get_string('sweeps/removing_reactions'))
+            pending = await ctx.send(Lang.get_locale_string('sweeps/removing_reactions', ctx))
             await message.clear_reactions()
             await pending.delete()
 
             if my_emoji:
-                pending = await ctx.send(Lang.get_string('sweeps/adding_reactions'))
+                pending = await ctx.send(Lang.get_locale_string('sweeps/adding_reactions', ctx))
                 emoji_success = True
-                add_react_msg = await ctx.send(Lang.get_string('sweeps/adding_reactions_progress'))
+                add_react_msg = await ctx.send(Lang.get_locale_string('sweeps/adding_reactions_progress', ctx))
                 for emoji in my_emoji:
                     try:
                         # emoji = f"{emoji.id}" if hasattr(emoji, "id") else emoji
@@ -235,16 +238,16 @@ class Sweepstakes(BaseCog):
                         await add_react_msg.edit(content=f"{add_react_msg.content} {emoji}")
                     except discord.errors.HTTPException as e:
                         emoji_success = False
-                        await ctx.send(Lang.get_string('sweeps/emoji_fail', emoji=emoji))
+                        await ctx.send(Lang.get_locale_string('sweeps/emoji_fail', ctx, emoji=emoji))
                         continue
 
                 await pending.delete()
                 if not emoji_success:
-                    await ctx.send(Lang.get_string('sweeps/partial_emoji_fail'))
+                    await ctx.send(Lang.get_locale_string('sweeps/partial_emoji_fail', ctx))
 
-                await ctx.send(Lang.get_string('sweeps/drawing_restarted'))
+                await ctx.send(Lang.get_locale_string('sweeps/drawing_restarted', ctx))
             else:
-                await ctx.send(Lang.get_string('sweeps/drawing_closed'))
+                await ctx.send(Lang.get_locale_string('sweeps/drawing_closed', ctx))
 
     @entries.command(aliases=["unique"])
     @commands.guild_only()
@@ -259,11 +262,6 @@ class Sweepstakes(BaseCog):
         """get a list of all reactions to a given message"""
         message = await self.get_reaction_message(ctx, jump_url)
         await self.fetch_all(ctx, message)
-
-    @sweepstakes.command(aliases=["h"])
-    @commands.guild_only()
-    async def help(self, ctx):
-        await ctx.send(Lang.get_string('sweeps/help'))
 
 
 def setup(bot):

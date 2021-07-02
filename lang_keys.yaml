@@ -1,0 +1,151 @@
+common:
+  nope:
+  which_one:
+  you_chose_codeblock:
+  you_chose_bold:
+  expect_integer:
+guild_config:
+  info_title:
+channel_config:
+  info:
+  channel_set:
+permission_config:
+  info:
+  permission_set:
+lang:
+  default_set:
+  default_not_changed:
+  lang_settings_title:
+  unknown_locale:
+  reloaded:
+  channel_not_unset:
+  channel_unset:
+  channel_already_set:
+  channel_set:
+  test:
+  test_failed:
+questions:
+  text_only:
+  confirm_prompt:
+  another_attachment:
+  confirm_attachments:
+  restart_attachment_singular:
+  restart_attachment_plural:
+  restart_attachments_yes:
+  restart_attachments_no:
+  attachment_prompt:
+  attachment_prompt_continued:
+  attachment_prompt_final:
+  attachments_restart:
+  attachments_overflow:
+  attachment_not_found:
+  approve_attachments:
+  error_reaction_timeout:
+welcome:
+  welcome_msg:
+  welcome_mute_msg:
+  welcome_help:
+  darkness:
+  darkness_plural:
+  darkened:
+  darkened_plural:
+  mute_settings_title:
+  help:
+dropbox:
+  list:
+  added:
+  updated:
+  not_updating:
+  removed:
+  not_removed:
+  channel_not_found:
+  override_confirmation:
+  msg_delivered:
+  msg_not_delivered:
+autoresponder:
+  mod_action_header:
+  mod_action_warning:
+  you_chose:
+  list:
+  raw:
+  none_set:
+  no_commands:
+  trigger_too_long:
+  added:
+  removed:
+  updated:
+  chanceset:
+  override_confirmation:
+  empty_reply:
+  empty_trigger:
+  channel_unset:
+  channel_set:
+  no_channel:
+  updating:
+  not_updating:
+  not_found:
+  creating:
+  which_flag:
+  which_mode:
+  which_trigger:
+  available_triggers:
+  prompt_channel_id:
+  prompt_response:
+  prompt_trigger:
+  prompt_chance:
+  on_or_off:
+  expect_integer:
+react_monitor:
+  info_title:
+art:
+  list_channels:
+  no_channels:
+  channel_added:
+  channel_not_found:
+  channel_found:
+  channel_removed:
+  no_such_channel:
+  remove_channel_failed:
+custom_commands:
+  list_commands:
+  no_commands:
+  empty_trigger:
+  empty_reply:
+  trigger_too_long:
+  command_added:
+  updating_command:
+  not_updating_command:
+  override_confirmation:
+  command_removed:
+  not_found:
+  creating_command:
+  command_updated:
+  delete_trigger_updated:
+  reply_trigger_updated:
+word_counter:
+  list_words:
+  no_words:
+  word_added:
+  word_found:
+  word_removed:
+  word_not_found:
+sweeps:
+  jumpurl_prompt:
+  unique_result:
+  total_entries:
+  all_invalid_emoji:
+  some_invalid_emoji:
+  invalid_emoji_confirm:
+  no_reactions:
+  removing_reactions:
+  adding_reactions:
+  adding_reactions_progress:
+  emoji_fail:
+  partial_emoji_fail:
+  drawing_closed:
+  drawing_restarted:
+  fetch_message_failed:
+  fetch_entries_failed:
+  entries_sub_command:
+  end_sweeps_sub_command:
+  help:

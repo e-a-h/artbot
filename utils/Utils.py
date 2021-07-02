@@ -11,20 +11,22 @@ from json import JSONDecodeError
 import discord
 import sentry_sdk
 from aiohttp import ClientOSError, ServerDisconnectedError
-from discord import Embed, Colour, ConnectionClosed, NotFound
+from discord import Embed, Colour, ConnectionClosed, NotFound, guild
 from discord.abc import PrivateChannel
 
 from utils import Logging, Configuration
 
 BOT = None
-ID_MATCHER = re.compile("<@!?([0-9]+)>")
+GUILD_CONFIGS = dict()
+ID_MATCHER = re.compile("<@!?([0-9]+)[\\\\]*>")
 ROLE_ID_MATCHER = re.compile("<@&([0-9]+)>")
 CHANNEL_ID_MATCHER = re.compile("<#([0-9]+)>")
-MENTION_MATCHER = re.compile("<@[!&]?\\d+>")
+MENTION_MATCHER = re.compile("(<@[\u200b]?[!&]?)(\\d+)[\\\\]*(>)")
 URL_MATCHER = re.compile(r'((?:https?://)[a-z0-9]+(?:[-._][a-z0-9]+)*\.[a-z]{2,5}(?::[0-9]{1,5})?(?:/[^ \n<>]*)?)',
                          re.IGNORECASE)
 EMOJI_MATCHER = re.compile('<(a?):([^: \n]+):([0-9]+)>')
 NUMBER_MATCHER = re.compile(r"\d+")
+INVITE_MATCHER = re.compile(r"(?:https?://)?(?:www\.)?(?:discord(?:\.| |\[?\(?\"?'?dot'?\"?\)?\]?)?(?:gg|io|me|li)|discord(?:app)?\.com/invite)/+((?:(?!https?)[\w\d-])+)", flags=re.IGNORECASE)
 
 welcome_channel = "welcome_channel"
 rules_channel = "rules_channel"
@@ -32,6 +34,7 @@ log_channel = "log_channel"
 ro_art_channel = "ro_art_channel"
 entry_channel = "entry_channel"
 
+COLOR_LIME = 0xbefc03
 
 def validate_channel_name(channel_name):
     return channel_name in (welcome_channel, rules_channel, log_channel, ro_art_channel, entry_channel)
@@ -45,6 +48,40 @@ def get_chanconf_description(bot, guild_id):
     except Exception as ex:
         pass
     return message
+
+
+async def fetch_last_message_by_channel(channel):
+    try:
+        last_message = await channel.history(limit=1).flatten()
+        return last_message[0]
+    except NotFound:
+        return None
+
+
+def permission_official_mute(member_id):
+    return permission_official(member_id, 'mute_members')
+
+
+def permission_official_ban(member_id):
+    return permission_official(member_id, 'ban_members')
+
+
+def permission_official(member_id, permission_name):
+    # ban permission on official server - sort of a hack to propagate perms
+    # TODO: better permissions model
+    try:
+        official_guild = BOT.get_guild(Configuration.get_var("guild_id"))
+        official_member = official_guild.get_member(member_id)
+        return getattr(official_member.guild_permissions, permission_name)
+    except Exception:
+        return False
+
+
+def get_channel_description(bot, channel_id):
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        return f"**[Invalid Channel ID {channel_id}]**"
+    return f"**{channel.name}** {channel.mention} ({channel.id})"
 
 
 def extract_info(o):
@@ -64,7 +101,7 @@ def extract_info(o):
     return info
 
 
-async def handle_exception(exception_type, bot, exception, event=None, message=None, ctx=None, *args, **kwargs):
+def get_embed_and_log_exception(exception_type, bot, exception, event=None, message=None, ctx=None, *args, **kwargs):
     with sentry_sdk.push_scope() as scope:
         embed = Embed(colour=Colour(0xff0000), timestamp=datetime.utcfromtimestamp(time.time()))
 
@@ -140,7 +177,8 @@ async def handle_exception(exception_type, bot, exception, event=None, message=N
             scope.set_tag('channel', channel_name)
 
             sender = f"{str(ctx.author)} (`{ctx.author.id}`)"
-            scope.user = dict(id=ctx.author.id, username=str(ctx.author))
+            scope.set_user({"id": ctx.author.id, "username": str(ctx.author)})
+
             lines.append(f"Sender: {sender}")
             embed.add_field(name="Sender", value=sender, inline=False)
 
@@ -160,6 +198,11 @@ async def handle_exception(exception_type, bot, exception, event=None, message=N
         else:
             embed.add_field(name="Traceback", value="stacktrace too long, see logs")
         sentry_sdk.capture_exception(exception)
+        return embed
+
+
+async def handle_exception(exception_type, bot, exception, event=None, message=None, ctx=None, *args, **kwargs):
+    embed = get_embed_and_log_exception(exception_type, bot, exception, event, message, ctx, *args, **kwargs)
     try:
         await Logging.bot_log(embed=embed)
     except Exception as ex:
@@ -321,7 +364,7 @@ def to_pretty_time(seconds):
     return duration.strip()
 
 
-def split_list(input_list, chunk_size):
+def chunk_list_or_string(input_list, chunk_size):
     for i in range(0, len(input_list), chunk_size):
         yield input_list[i:i + chunk_size]
 
@@ -332,23 +375,34 @@ def paginate(input, max_lines=20, max_chars=1900, prefix="", suffix=""):
     pages = []
     page = ""
     count = 0
+
+    def add_page(content):
+        nonlocal pages
+        pages.append(f"{prefix}{content}{suffix}")
+
     for line in lines:
+        # if word is longer than available space > if word longer than max, split on char, else newpage = word
         if len(page) + len(line) > max_chars or count == max_lines:
-            if page == "":
-                # single 2k line, split smaller
-                words = line.split(" ")
-                for word in words:
-                    if len(page) + len(word) > max_chars:
-                        pages.append(f"{prefix}{page}{suffix}")
-                        page = f"{word} "
+            # single 2k line, split smaller
+            words = line.split(" ")
+            for word in words:
+                if len(page) + len(word) > max_chars:
+                    if page:
+                        add_page(page)
+                        count += 1
+                    if len(word) > max_chars:
+                        for chunk in chunk_list_or_string(word, max_chars):
+                            page = f"{chunk} "
+                            if len(chunk) == max_chars:
+                                add_page(page)
+                            # fall through here because this chunk doesn't fill the page yet
+                            continue
                     else:
-                        page += f"{word} "
-            else:
-                pages.append(f"{prefix}{page}{suffix}")
-                page = line
-                count = 1
+                        page = f"{word} "
+                else:
+                    page += f"{word} "
         else:
             page += line
-        count += 1
-    pages.append(f"{prefix}{page}{suffix}")
+    # append the last page
+    add_page(page)
     return pages

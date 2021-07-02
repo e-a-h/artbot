@@ -6,7 +6,7 @@ from discord.ext import commands
 from prometheus_client.exposition import generate_latest
 
 from cogs.BaseCog import BaseCog
-from utils import Logging
+from utils import Configuration, Logging
 
 
 class PromMonitoring(BaseCog):
@@ -26,8 +26,10 @@ class PromMonitoring(BaseCog):
 
     @commands.Cog.listener()
     async def on_command_completion(self, ctx):
+        guild_id = ctx.guild.id if ctx.guild is not None else 0
         self.bot.metrics.command_counter.labels(
             command_name=ctx.command.qualified_name,
+            guild_id=guild_id
         ).inc()
 
     @commands.Cog.listener()
@@ -35,20 +37,22 @@ class PromMonitoring(BaseCog):
         m = self.bot.metrics
 
         m.guild_messages.labels(
-            guild_id = message.guild.id if message.guild is not None else 0
+            guild_id=message.guild.id if message.guild is not None else 0
         ).inc()
 
         (m.own_message_raw_count if message.author.id == self.bot.user.id else m.bot_message_raw_count if message.author.bot else m.user_message_raw_count).inc()
 
     async def create_site(self):
-        await asyncio.sleep(5)
-        Logging.info("starting metrics server")
+        port = Configuration.get_var('METRICS_PORT', 8080)
+
+        await asyncio.sleep(10)
+        print("starting metrics server")
         metrics_app = web.Application()
         metrics_app.add_routes([web.get("/metrics", self.serve_metrics)])
 
         runner = web.AppRunner(metrics_app)
         await self.bot.loop.create_task(runner.setup())
-        site = web.TCPSite(runner, port=28081, host='localhost')
+        site = web.TCPSite(runner, port=port, host='localhost')
         await site.start()
 
         self.metric_server = site

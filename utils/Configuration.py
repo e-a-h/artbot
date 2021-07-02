@@ -10,16 +10,17 @@ PERSISTENT_LOADED = False
 
 def save():
     global MASTER_CONFIG
-    with open('config.json', 'w') as json_file:
-        json_file.write((json.dumps(MASTER_CONFIG, indent=4, skipkeys=True, sort_keys=True)))
+    with open('config.json', 'w') as jsonfile:
+        jsonfile.write((json.dumps(MASTER_CONFIG, indent=4, skipkeys=True, sort_keys=True)))
+        jsonfile.close()
 
 
 # Ugly but this prevents import loop errors
 def load():
     global MASTER_CONFIG, MASTER_LOADED
     try:
-        with open('config.json', 'r') as json_file:
-            MASTER_CONFIG = json.load(json_file)
+        with open('config.json', 'r') as jsonfile:
+            MASTER_CONFIG = json.load(jsonfile)
             MASTER_LOADED = True
     except FileNotFoundError:
         Logging.error("Unable to load config, running with defaults.")
@@ -54,3 +55,17 @@ def get_persistent_var(key, default=None):
 def set_persistent_var(key, value):
     PERSISTENT[key] = value
     Utils.save_to_disk("persistent", PERSISTENT)
+
+
+def del_persistent_var(key, tolerate_missing=False):
+    try:
+        del PERSISTENT[key]
+        Utils.save_to_disk("persistent", PERSISTENT)
+    except KeyError as e:
+        if tolerate_missing:
+            Logging.info(f'skipping delete for `{key}`')
+            return
+        Logging.info(f'NOT skipping delete for `{key}`')
+        Utils.get_embed_and_log_exception(f"cannot delete nonexistent persistent var `{key}`", Utils.BOT, e)
+    except Exception as e:
+        Utils.get_embed_and_log_exception(f"---delete persistent var failed--- key `{key}`", Utils.BOT, e)
