@@ -341,6 +341,15 @@ def save_to_disk(filename, data, ext="json", fields=None):
                 csvwriter.writerow(row)
 
 
+def save_to_buffer(buffer, data, ext="json", fields=None):
+    if ext == 'json':
+        json.dump(data, buffer, indent=4, skipkeys=True, sort_keys=True)
+    elif ext == 'csv':
+        csvwriter = csv.DictWriter(buffer, fieldnames=fields)
+        csvwriter.writeheader()
+        csvwriter.writerows(data)
+
+
 def to_pretty_time(seconds):
     partcount = 0
     parts = {

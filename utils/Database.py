@@ -1,5 +1,5 @@
 from peewee import MySQLDatabase, Model, BigIntegerField, CharField, ForeignKeyField, AutoField, \
-    TimestampField, SmallIntegerField, BooleanField
+    TimestampField, SmallIntegerField, BooleanField, TextField
 
 from utils import Configuration
 
@@ -24,6 +24,44 @@ class Guild(Model):
     entrychannelid = BigIntegerField(default=0)
     rulesreactmessageid = BigIntegerField(default=0)
     defaultlocale = CharField(max_length=10)
+
+    class Meta:
+        database = connection
+
+
+class PremiumTier(Model):
+    id = AutoField()
+    guild = ForeignKeyField(Guild, backref='premium_tiers')
+    roleid = BigIntegerField(unique=True)
+
+    class Meta:
+        database = connection
+
+
+class PremiumTierMember(Model):
+    id = AutoField()
+    userid = BigIntegerField()
+    tier = ForeignKeyField(PremiumTier, backref='members')
+
+    class Meta:
+        database = connection
+
+
+class PremiumTierRequirement(Model):
+    id = AutoField()
+    tier = ForeignKeyField(PremiumTier, backref='requirements')
+    name = CharField(max_length=100, collation="utf8mb4_general_ci")
+    prompt = CharField(max_length=500, collation="utf8mb4_general_ci")
+
+    class Meta:
+        database = connection
+
+
+class PremiumTierMemberInfo(Model):
+    id = AutoField()
+    requirementid = BigIntegerField()
+    member = ForeignKeyField(PremiumTierMember, backref='info')
+    value = CharField(max_length=500, collation="utf8mb4_general_ci")
 
     class Meta:
         database = connection
@@ -196,6 +234,10 @@ def init():
         ReactWatch,
         WatchedEmoji,
         Localization,
-        DropboxChannel
+        DropboxChannel,
+        PremiumTier,
+        PremiumTierMember,
+        PremiumTierMemberInfo,
+        PremiumTierRequirement
     ])
     connection.close()

@@ -130,7 +130,7 @@ async def ask_text(
                     break
                 else:
                     my_messages.append(await channel.send(result))
-        except asyncio.TimeoutError as ex:
+        except asyncio.exceptions.TimeoutError as ex:
             await clean_dialog()
             await channel.send(
                 # TODO: remove "bug" from lang string. send report cancel language from Bugs.py exception handler
@@ -142,6 +142,7 @@ async def ask_text(
         else:
             content = Utils.escape_markdown(message_cleaned) if escape else message_cleaned
             if confirm:
+                ask_again = True
                 backticks = "``" if len(message_cleaned.splitlines()) == 1 else "```"
                 message = Lang.get_locale_string('questions/confirm_prompt',
                                                  locale,
@@ -154,6 +155,8 @@ async def ask_text(
             else:
                 confirmed()
 
+            if ask_again:
+                continue
             await clean_dialog()
             return content
 

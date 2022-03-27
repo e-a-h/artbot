@@ -8,7 +8,7 @@ import sentry_sdk
 from discord.ext import commands
 from discord.ext.commands import Bot
 from aiohttp import ClientOSError, ServerDisconnectedError
-from discord import ConnectionClosed, Intents
+from discord import ConnectionClosed, Intents, AllowedMentions
 from prometheus_client import CollectorRegistry
 from sentry_sdk.integrations.aiohttp import AioHttpIntegration
 
@@ -112,7 +112,7 @@ class Artbot(Bot):
     async def guild_log(self, guild_id: int, message=None, embed=None):
         channel = self.get_guild_log_channel(guild_id)
         if channel and (message or embed):
-            return await channel.send(content=message, embed=embed)
+            return await channel.send(content=message, embed=embed, allowed_mentions=AllowedMentions.none())
 
     async def close(self):
         Logging.info("Shutting down?")
