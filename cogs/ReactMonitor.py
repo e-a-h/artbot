@@ -118,8 +118,9 @@ class ReactMonitor(BaseCog):
         self.react_watch_servers.remove(guild_id)
 
     def is_user_event_ignored(self, event):
-        ignored_channels = Configuration.get_var('channels')
-        is_ignored_channel = event.channel_id in ignored_channels.values()
+        # TODO: create db model for ignored channels?
+        # ignored_channels = Configuration.get_var('channels')
+        # is_ignored_channel = event.channel_id in ignored_channels.values()
         guild = self.bot.get_guild(event.guild_id)
         if not guild:
             # Don't listen to DMs
@@ -139,7 +140,7 @@ class ReactMonitor(BaseCog):
                 has_admin = True
 
         # ignore bot, ignore mod, ignore admin users and admin roles
-        if is_bot or is_mod or is_admin or has_admin or is_ignored_channel:
+        if is_bot or is_mod or is_admin or has_admin:  # or is_ignored_channel:
             return True
         return False
 
