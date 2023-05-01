@@ -12,36 +12,33 @@ class WordCounter(BaseCog):
 
     def __init__(self, bot):
         super().__init__(bot)
+        self.words = None
+
+    async def on_ready(self):
         self.words = dict()
-        self.loaded = False
-        bot.loop.create_task(self.startup_cleanup())
-
-    async def startup_cleanup(self):
         for guild in self.bot.guilds:
-            self.init_guild(guild)
-        self.loaded = True
+            await self.init_guild(guild)
 
-    def init_guild(self, guild):
+    async def init_guild(self, guild):
         my_words = set()
         # fetch words and build matching pattern
-        for row in CountWord.select().where(CountWord.serverid == guild.id):
+        for row in await CountWord.filter(serverid=guild.id):
             my_words.add(re.escape(row.word))
         self.words[guild.id] = "|".join(my_words)
 
-    async def cog_check(self, ctx):
+    def cog_check(self, ctx):
         if ctx.guild is None:
             return False
         return ctx.author.guild_permissions.ban_members
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild):
-        self.init_guild(guild)
+        await self.init_guild(guild)
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
         del self.words[guild.id]
-        for word in CountWord.select().where(CountWord.serverid == guild.id):
-            word.delete_instance()
+        await CountWord.filter(serverid=guild.id).delete()
 
     @commands.group(name="wordcounter", aliases=['wordcount', 'word_count', 'countword', 'count_word'], invoke_without_command=True)
     @commands.guild_only()
@@ -54,7 +51,8 @@ class WordCounter(BaseCog):
             title=Lang.get_locale_string("word_counter/list_words", ctx, server_name=ctx.guild.name))
 
         word_list = set()
-        for row in CountWord.select().where(CountWord.serverid == ctx.guild.id):
+        # TODO: get guild->words
+        for row in await CountWord.filter(serverid=ctx.guild.id):
             word_list.add(row.word)
 
         if word_list != set():
@@ -75,10 +73,10 @@ class WordCounter(BaseCog):
     @commands.guild_only()
     async def add(self, ctx: commands.Context, *, word: str):
         """command_add_help"""
-        row = CountWord.get_or_none(serverid=ctx.guild.id, word=word)
+        row = await CountWord.get_or_none(serverid=ctx.guild.id, word=word)
         if row is None:
-            CountWord.create(serverid = ctx.guild.id, word=word)
-            await self.startup_cleanup()
+            await CountWord.create(serverid = ctx.guild.id, word=word)
+            await self.on_ready()
             emoji = Emoji.get_chat_emoji('YES')
             msg = Lang.get_locale_string('word_counter/word_added', ctx, word=word)
             await ctx.send(f"{emoji} {msg}")
@@ -89,10 +87,10 @@ class WordCounter(BaseCog):
     @commands.guild_only()
     async def remove(self, ctx:commands.Context, *, word):
         """command_remove_help"""
-        row = CountWord.get_or_none(serverid=ctx.guild.id, word=word)
+        row = await CountWord.get_or_none(serverid=ctx.guild.id, word=word)
         if row is not None:
-            row.delete_instance()
-            await self.startup_cleanup()
+            await row.delete()
+            await self.on_ready()
             emoji = Emoji.get_chat_emoji('YES')
             msg = Lang.get_locale_string('word_counter/word_removed', ctx, word=word)
         else:
@@ -106,7 +104,8 @@ class WordCounter(BaseCog):
             return
 
         prefix = Configuration.get_var("bot_prefix")
-        is_boss = await self.cog_check(message)
+        ctx = await self.bot.get_context(message)
+        is_boss = self.cog_check(ctx)
         command_context = message.content.startswith(prefix, 0) and is_boss
         not_in_guild = not hasattr(message.channel, "guild") or message.channel.guild is None
 
@@ -123,5 +122,5 @@ class WordCounter(BaseCog):
             m.word_counter.labels(word=word, guild_name=message.guild.name, guild_id=message.guild.id).inc()
 
 
-def setup(bot):
-    bot.add_cog(WordCounter(bot))
+async def setup(bot):
+    await bot.add_cog(WordCounter(bot))

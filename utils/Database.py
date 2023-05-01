@@ -1,243 +1,287 @@
-from peewee import MySQLDatabase, Model, BigIntegerField, CharField, ForeignKeyField, AutoField, \
-    TimestampField, SmallIntegerField, BooleanField, TextField
-
-from utils import Configuration
-
-connection = MySQLDatabase(Configuration.get_var("DATABASE_NAME"),
-                           user=Configuration.get_var("DATABASE_USER"),
-                           password=Configuration.get_var("DATABASE_PASS"),
-                           host=Configuration.get_var("DATABASE_HOST"),
-                           port=Configuration.get_var("DATABASE_PORT"),
-                           use_unicode=True,
-                           charset="utf8mb4")
+from tortoise import Tortoise
+from tortoise.models import Model
+from tortoise.fields import \
+    BooleanField, BigIntField, IntField, SmallIntField, CharField, ForeignKeyField, OneToOneField, ReverseRelation
+from utils import tortoise_settings, Logging
+import os
 
 
-class Guild(Model):
-    id = AutoField()
-    serverid = BigIntegerField()
-    memberrole = BigIntegerField(default=0)
-    nonmemberrole = BigIntegerField(default=0)
-    mutedrole = BigIntegerField(default=0)
-    welcomechannelid = BigIntegerField(default=0)
-    ruleschannelid = BigIntegerField(default=0)
-    logchannelid = BigIntegerField(default=0)
-    entrychannelid = BigIntegerField(default=0)
-    rulesreactmessageid = BigIntegerField(default=0)
-    defaultlocale = CharField(max_length=10)
+async def init(db_name=''):
+    #  specify the app name of 'models'
+    #  which contain models from "app.models"
 
-    class Meta:
-        database = connection
+    # env var ARTBOT_DB will override db name from both init call AND config.json
+    override_db_name = os.getenv('ARTBOT_DB')
+    if override_db_name:
+        db_name = override_db_name
+
+    settings = tortoise_settings.TORTOISE_ORM
+    if db_name:
+        settings['connections']['default']['credentials']['database'] = db_name
+
+    Logging.info(f"Database init - \"{settings['connections']['default']['credentials']['database']}\"")
+    await Tortoise.init(settings)
 
 
-class PremiumTier(Model):
-    id = AutoField()
-    guild = ForeignKeyField(Guild, backref='premium_tiers')
-    roleid = BigIntegerField(unique=True)
+class AbstractBaseModel(Model):
+    id = IntField(pk=True)
 
     class Meta:
-        database = connection
+        abstract = True
 
 
-class PremiumTierMember(Model):
-    id = AutoField()
-    userid = BigIntegerField()
-    tier = ForeignKeyField(PremiumTier, backref='members')
-
-    class Meta:
-        database = connection
+class DeprecatedServerIdMixIn:
+    serverid = BigIntField()
 
 
-class PremiumTierRequirement(Model):
-    id = AutoField()
-    tier = ForeignKeyField(PremiumTier, backref='requirements')
-    name = CharField(max_length=100, collation="utf8mb4_general_ci")
-    prompt = CharField(max_length=500, collation="utf8mb4_general_ci")
+class AdminRole(AbstractBaseModel):
+    guild = ForeignKeyField('artbot.Guild', related_name='admin_roles', index=True)
+    roleid = BigIntField()
+
+    def __str__(self):
+        return str(self.roleid)
 
     class Meta:
-        database = connection
+        unique_together = ('roleid', 'guild')
+        table = 'adminrole'
 
 
-class PremiumTierMemberInfo(Model):
-    id = AutoField()
-    requirementid = BigIntegerField()
-    member = ForeignKeyField(PremiumTierMember, backref='info')
-    value = CharField(max_length=500, collation="utf8mb4_general_ci")
+class ArtChannel(AbstractBaseModel, DeprecatedServerIdMixIn):
+    # guild = ForeignKeyField('artbot.Guild', related_name='artchannels')
+    listenchannelid = BigIntField(default=0)
+    collectionchannelid = BigIntField(default=0)
+    tag = CharField(max_length=50, default="")
 
-    class Meta:
-        database = connection
-
-
-class ConfigChannel(Model):
-    id = AutoField()
-    configname = CharField(max_length=100, collation="utf8mb4_general_ci")
-    channelid = BigIntegerField(default=0)
-    serverid = BigIntegerField()
+    def __str__(self):
+        return str(self.listenchannelid)
 
     class Meta:
-        database = connection
+        unique_together = ('serverid', 'listenchannelid', 'collectionchannelid', 'tag')
+        table = 'artchannel'
 
 
-class CustomCommand(Model):
-    id = AutoField()
-    serverid = BigIntegerField()
-    trigger = CharField(max_length=20, collation="utf8mb4_general_ci")
-    response = CharField(max_length=2000, collation="utf8mb4_general_ci")
+class AutoResponder(AbstractBaseModel, DeprecatedServerIdMixIn):
+    trigger = CharField(max_length=300)
+    response = CharField(max_length=2000)
+    flags = SmallIntField(default=0)
+    chance = SmallIntField(default=10000)
+    responsechannelid = BigIntField(default=0)
+    listenchannelid = BigIntField(default=0)
+    logchannelid = BigIntField(default=0)
+
+    def __str__(self):
+        return self.trigger
+
+    class Meta:
+        unique_together = ('trigger', 'serverid')
+        table = 'autoresponder'
+
+
+class BotAdmin(AbstractBaseModel):
+    userid = BigIntField(unique=True)
+
+    def __str__(self):
+        return str(self.userid)
+
+    class Meta:
+        table = 'botadmin'
+
+
+class ConfigChannel(AbstractBaseModel, DeprecatedServerIdMixIn):
+    configname = CharField(max_length=100)
+    channelid = BigIntField(default=0)
+
+    def __str__(self):
+        return str(self.channelid)
+
+    class Meta:
+        unique_together = ('configname', 'serverid')
+        table = 'configchannel'
+
+
+class CountWord(AbstractBaseModel, DeprecatedServerIdMixIn):
+    # guild = ForeignKeyField('artbot.Guild', related_name='watchwords')
+    word = CharField(max_length=300)
+
+    def __str__(self):
+        return self.word
+
+    class Meta:
+        unique_together = ('word', 'serverid')
+        table = 'countword'
+
+
+class CustomCommand(AbstractBaseModel, DeprecatedServerIdMixIn):
+    trigger = CharField(max_length=20)
+    response = CharField(max_length=2000)
     deletetrigger = BooleanField(default=False)
     reply = BooleanField(default=False)
 
-    class Meta:
-        database = connection
-
-
-class AutoResponder(Model):
-    id = AutoField()
-    serverid = BigIntegerField()
-    trigger = CharField(max_length=300, collation="utf8mb4_general_ci")
-    response = CharField(max_length=2000, collation="utf8mb4_general_ci")
-    flags = SmallIntegerField(default=0)
-    chance = SmallIntegerField(default=10000)
-    responsechannelid = BigIntegerField(default=0)
-    listenchannelid = BigIntegerField(default=0)
-    logchannelid = BigIntegerField(default=0)
+    def __str__(self):
+        return self.trigger
 
     class Meta:
-        database = connection
+        unique_together = ('trigger', 'serverid')
+        table = 'customcommand'
 
 
-class CountWord(Model):
-    id = AutoField()
-    serverid = BigIntegerField()
-    # guild = ForeignKeyField(Guild, backref='watchwords')
-    word = CharField(max_length=300, collation="utf8mb4_general_ci")
+class DropboxChannel(AbstractBaseModel, DeprecatedServerIdMixIn):
+    sourcechannelid = BigIntField()
+    targetchannelid = BigIntField(default=0)
+    deletedelayms = SmallIntField(default=0)
+    sendreceipt = BooleanField(default=False)
+
+    def __str__(self):
+        return str(self.sourcechannelid)
 
     class Meta:
-        database = connection
+        unique_together = ('serverid', 'sourcechannelid')
+        table = 'dropboxchannel'
 
 
-class ReactWatch(Model):
-    id = AutoField()
-    serverid = BigIntegerField()
-    # guild = ForeignKeyField(Guild, backref='watchemoji')
-    muteduration = SmallIntegerField(default=600)
+class Guild(AbstractBaseModel):
+    serverid = BigIntField(unique=True)
+    memberrole = BigIntField(default=0)
+    nonmemberrole = BigIntField(default=0)
+    mutedrole = BigIntField(default=0)
+    welcomechannelid = BigIntField(default=0)
+    ruleschannelid = BigIntField(default=0)
+    logchannelid = BigIntField(default=0)
+    entrychannelid = BigIntField(default=0)
+    rulesreactmessageid = BigIntField(default=0)
+    defaultlocale = CharField(max_length=10)
+
+    admin_roles: ReverseRelation["AdminRole"]
+    locales: ReverseRelation["Localization"]
+    mod_roles: ReverseRelation["ModRole"]
+    trusted_roles: ReverseRelation["TrustedRole"]
+    command_permissions: ReverseRelation["UserPermission"]
+    premium_tiers: ReverseRelation["PremiumTier"]
+
+    def __str__(self):
+        return self.serverid
+
+    class Meta:
+        table = 'guild'
+
+
+class Localization(AbstractBaseModel):
+    guild = ForeignKeyField('artbot.Guild', related_name='locales', index=True)
+    channelid = BigIntField(default=0)
+    locale = CharField(max_length=10, default='')
+
+    def __str__(self):
+        return f"localized channel {str(self.channelid)} uses language: {self.locale}"
+
+    class Meta:
+        unique_together = ('guild', 'channelid')
+        table = 'localization'
+
+
+class ModRole(AbstractBaseModel):
+    guild = ForeignKeyField('artbot.Guild', related_name='mod_roles', index=True)
+    roleid = BigIntField()
+
+    def __str__(self):
+        return str(self.roleid)
+
+    class Meta:
+        unique_together = ('roleid', 'guild')
+        table = 'modrole'
+
+
+class PremiumTier(AbstractBaseModel):
+    guild = ForeignKeyField('artbot.Guild', related_name='premium_tiers', index=True)
+    roleid = BigIntField()
+
+    members: ReverseRelation["PremiumTierMember"]
+    requirements: ReverseRelation["PremiumTierRequirement"]
+
+    class Meta:
+        unique_together = ('guild', 'roleid')
+        table = 'premiumtier'
+
+
+class PremiumTierMember(AbstractBaseModel):
+    userid = BigIntField()
+    tier = ForeignKeyField('artbot.PremiumTier', related_name='members')
+
+    info: ReverseRelation["PremiumTierMemberInfo"]
+
+    class Meta:
+        table = 'premiumtiermember'
+
+
+class PremiumTierMemberInfo(AbstractBaseModel):
+    requirementid = BigIntField()
+    member = ForeignKeyField('artbot.PremiumTierMember', related_name='info')
+    value = CharField(max_length=500)
+
+    class Meta:
+        table = 'premiumtiermemberinfo'
+
+
+class PremiumTierRequirement(AbstractBaseModel):
+    tier = ForeignKeyField('artbot.PremiumTier', related_name='requirements')
+    name = CharField(max_length=100)
+    prompt = CharField(max_length=500)
+
+    class Meta:
+        table = 'premiumtierrequirement'
+
+
+class ReactWatch(AbstractBaseModel):
+    # guild = OneToOneField('artbot.Guild', related_name='watchemoji')
+    serverid = BigIntField(unique=True)
+    muteduration = SmallIntField(default=600)
     watchremoves = BooleanField(default=False)
 
+    emoji: ReverseRelation["WatchedEmoji"]
+
+    def __str__(self):
+        return f"Server: {self.serverid} - Mute Time: {self.muteduration}s - " \
+               f"Watching for react removal: {'YES' if self.watchremoves else 'NO'}"
+
     class Meta:
-        database = connection
+        table = 'reactwatch'
 
 
-class WatchedEmoji(Model):
-    id = AutoField()
-    watcher = ForeignKeyField(ReactWatch, backref='emoji')
-    emoji = CharField(max_length=50, collation="utf8mb4_general_ci", default="")
+class TrustedRole(AbstractBaseModel):
+    guild = ForeignKeyField('artbot.Guild', related_name='trusted_roles', index=True)
+    roleid = BigIntField()
+
+    def __str__(self):
+        return str(self.roleid)
+
+    class Meta:
+        unique_together = ('roleid', 'guild')
+        table = 'trustedrole'
+
+
+class UserPermission(AbstractBaseModel):
+    guild = ForeignKeyField('artbot.Guild', related_name='command_permissions', index=True)
+    userid = BigIntField()
+    command = CharField(max_length=200, default='')
+    allow = BooleanField(default=True)
+
+    def __str__(self):
+        return f"{str(self.userid)}: {self.command} = {'true' if self.allow else 'false'}"
+
+    class Meta:
+        unique_together = ('userid', 'command')
+        table = 'userpermission'
+
+
+class WatchedEmoji(AbstractBaseModel):
+    watcher = ForeignKeyField('artbot.ReactWatch', related_name='emoji', index=True)
+    emoji = CharField(max_length=50)
     log = BooleanField(default=False)
     remove = BooleanField(default=False)
     mute = BooleanField(default=False)
 
-    class Meta:
-        database = connection
-
-
-class ArtChannel(Model):
-    id = AutoField()
-    serverid = BigIntegerField()
-    # guild = ForeignKeyField(Guild, backref='artchannels')
-    listenchannelid = BigIntegerField(default=0)
-    collectionchannelid = BigIntegerField(default=0)
-    tag = CharField(max_length=30, collation="utf8mb4_general_ci")
+    def __str__(self):
+        return self.emoji
 
     class Meta:
-        database = connection
-
-
-class DropboxChannel(Model):
-    id = AutoField()
-    serverid = BigIntegerField()
-    sourcechannelid = BigIntegerField()
-    targetchannelid = BigIntegerField(default=0)
-    deletedelayms = SmallIntegerField(default=0)
-
-    class Meta:
-        database = connection
-
-
-class Localization(Model):
-    id = AutoField()
-    guild = ForeignKeyField(Guild, backref='locales')
-    channelid = BigIntegerField(default=0)
-    locale = CharField(max_length=10, default='')
-
-    class Meta:
-        database = connection
-
-
-class AdminRole(Model):
-    id = AutoField()
-    guild = ForeignKeyField(Guild, backref='admin_roles')
-    roleid = BigIntegerField()
-
-    class Meta:
-        database = connection
-
-
-class ModRole(Model):
-    id = AutoField()
-    guild = ForeignKeyField(Guild, backref='mod_roles')
-    roleid = BigIntegerField()
-
-    class Meta:
-        database = connection
-
-
-class BotAdmin(Model):
-    id = AutoField()
-    userid = BigIntegerField()
-
-    class Meta:
-        database = connection
-
-
-class TrustedRole(Model):
-    id = AutoField()
-    guild = ForeignKeyField(Guild, backref='trusted_roles')
-    roleid = BigIntegerField()
-
-    class Meta:
-        database = connection
-
-
-class UserPermission(Model):
-    id = AutoField()
-    guild = ForeignKeyField(Guild, backref='command_permissions')
-    userid = BigIntegerField()
-    command = CharField(max_length=200, default='')
-    allow = BooleanField(default=True)
-
-    class Meta:
-        database = connection
-
-
-def init():
-    global connection
-    connection.connect()
-    connection.create_tables([
-        Guild,
-        BotAdmin,
-        AdminRole,
-        ModRole,
-        TrustedRole,
-        UserPermission,
-        ArtChannel,
-        AutoResponder,
-        ConfigChannel,
-        CountWord,
-        CustomCommand,
-        ReactWatch,
-        WatchedEmoji,
-        Localization,
-        DropboxChannel,
-        PremiumTier,
-        PremiumTierMember,
-        PremiumTierMemberInfo,
-        PremiumTierRequirement
-    ])
-    connection.close()
+        unique_together = ('emoji', 'watcher')
+        table = 'watchedemoji'

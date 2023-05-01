@@ -130,7 +130,7 @@ async def ask_text(
                     break
                 else:
                     my_messages.append(await channel.send(result))
-        except asyncio.exceptions.TimeoutError as ex:
+        except asyncio.TimeoutError as ex:
             await clean_dialog()
             await channel.send(
                 # TODO: remove "bug" from lang string. send report cancel language from Bugs.py exception handler

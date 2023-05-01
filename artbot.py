@@ -1,8 +1,6 @@
 import asyncio
-import glob
-import importlib
-import re
 import signal
+from asyncio import shield
 
 import sentry_sdk
 from discord.ext import commands
@@ -11,11 +9,16 @@ from aiohttp import ClientOSError, ServerDisconnectedError
 from discord import ConnectionClosed, Intents, AllowedMentions
 from prometheus_client import CollectorRegistry
 from sentry_sdk.integrations.aiohttp import AioHttpIntegration
+from tortoise import Tortoise
+from aerich import Command
 
-from utils import Logging, Configuration, Utils, Emoji, Database
+import utils.tortoise_settings
+from utils import Logging, Configuration, Utils, Emoji, Database, Lang
+from utils.Logging import TCol
 from utils.Database import BotAdmin, Guild
-
 from utils.PrometheusMon import PrometheusMon
+
+running = None
 
 
 class Artbot(Bot):
@@ -31,52 +34,71 @@ class Artbot(Bot):
         self.config_channels = dict()
         self.db_keepalive = None
         self.my_name = type(self).__name__
+        self.loaded = False
 
-    async def on_ready(self):
-        if self.loaded:
-            Logging.info(f"{self.my_name} reconnect")
-            return
+    async def setup_hook(self):
+        Logging.info(f'{TCol.cUnderline}{TCol.cWarning}setup_hook start{TCol.cEnd}{TCol.cEnd}')
 
-        Logging.BOT_LOG_CHANNEL = self.get_channel(Configuration.get_var("log_channel"))
-        Emoji.initialize(self)
+        await Database.init()
+        Logging.info('db init is done')
+
+        await Lang.load_local_overrides()
+        Logging.info(f"Locales loaded\nguild: {Lang.GUILD_LOCALES}\nchannel: {Lang.CHANNEL_LOCALES}")
 
         for cog in Configuration.get_var("cogs"):
             try:
-                self.load_extension("cogs." + cog)
+                Logging.info(f"load cog {TCol.cOkCyan}{cog}{TCol.cEnd}")
+                await self.load_extension("cogs." + cog)
+                Logging.info(f"\t{TCol.cOkGreen}loaded{TCol.cEnd}")
             except Exception as e:
-                await Utils.handle_exception(f"Failed to load cog {cog}", self, e)
-        Logging.info("Cogs loaded")
+                await Utils.handle_exception(
+                    f"{TCol.cFail}Failed to load cog{TCol.cEnd} {TCol.cWarning}{cog}{TCol.cEnd}",
+                    self,
+                    e)
+        Logging.info(f"{TCol.cBold}{TCol.cOkGreen}Cog loading complete{TCol.cEnd}{TCol.cEnd}")
         self.db_keepalive = self.loop.create_task(self.keepDBalive())
         self.loaded = True
+        Logging.info(f'{TCol.cUnderline}{TCol.cWarning}setup_hook end{TCol.cEnd}{TCol.cEnd}')
 
-        await Logging.bot_log(f"{self.my_name} has started. Time to bot!")
+    async def on_ready(self):
+        Logging.info(f'{TCol.cUnderline}{TCol.cWarning}on_ready start{TCol.cEnd}{TCol.cEnd}')
+        Logging.BOT_LOG_CHANNEL = self.get_channel(Configuration.get_var("log_channel"))
+        Emoji.initialize(self)
 
-    def get_guild_log_channel(self, guild_id):
-        return self.get_guild_config_channel(guild_id, 'log')
+        on_ready_tasks = []
+        for cog in list(self.cogs):
+            c = self.get_cog(cog)
+            if hasattr(c, "on_ready"):
+                on_ready_tasks.append(c.on_ready())
+        await asyncio.gather(*on_ready_tasks)
 
-    def get_guild_rules_channel(self, guild_id):
-        return self.get_guild_config_channel(guild_id, 'rules')
+        Logging.info(f"{TCol.cUnderline}{TCol.cWarning}{self.my_name} startup complete{TCol.cEnd}{TCol.cEnd}")
+        await Logging.bot_log(f"{self.my_name} is now botting!")
 
-    def get_guild_welcome_channel(self, guild_id):
-        return self.get_guild_config_channel(guild_id, 'welcome')
+    async def get_guild_log_channel(self, guild_id):
+        # TODO: cog override for logging channel
+        return await self.get_guild_config_channel(guild_id, 'log')
 
-    def get_guild_entry_channel(self, guild_id):
-        return self.get_guild_config_channel(guild_id, 'entry')
+    async def get_guild_rules_channel(self, guild_id):
+        return await self.get_guild_config_channel(guild_id, 'rules')
 
-    def get_guild_maintenance_channel(self, guild_id):
-        return self.get_guild_config_channel(guild_id, 'maintenance')
+    async def get_guild_welcome_channel(self, guild_id):
+        return await self.get_guild_config_channel(guild_id, 'welcome')
 
-    def get_guild_config_channel(self, guild_id, name):
-        config = self.get_guild_db_config(guild_id)
+    async def get_guild_entry_channel(self, guild_id):
+        return await self.get_guild_config_channel(guild_id, 'entry')
+
+    async def get_guild_config_channel(self, guild_id, name):
+        config = await self.get_guild_db_config(guild_id)
         if config:
             return self.get_channel(getattr(config, f'{name}channelid'))
         return None
 
-    def get_guild_db_config(self, guild_id):
+    async def get_guild_db_config(self, guild_id):
         try:
             if guild_id in Utils.GUILD_CONFIGS:
                 return Utils.GUILD_CONFIGS[guild_id]
-            row = Guild.get_or_create(serverid=guild_id)[0]
+            row, created = await Guild.get_or_create(serverid=guild_id)
             Utils.GUILD_CONFIGS[guild_id] = row
             return row
         except Exception as e:
@@ -95,7 +117,7 @@ class Artbot(Bot):
         return None
 
     async def permission_manage_bot(self, ctx):
-        db_admin = BotAdmin.get_or_none(userid=ctx.author.id) is not None
+        db_admin = await BotAdmin.get_or_none(userid=ctx.author.id) is not None
         # Logging.info(f"db_admin: {'yes' if db_admin else 'no'}")
         owner = await ctx.bot.is_owner(ctx.author)
         # Logging.info(f"owner: {'yes' if owner else 'no'}")
@@ -110,7 +132,7 @@ class Artbot(Bot):
         return db_admin or owner or in_admins or has_admin_role
 
     async def guild_log(self, guild_id: int, message=None, embed=None):
-        channel = self.get_guild_log_channel(guild_id)
+        channel = await self.get_guild_log_channel(guild_id)
         if channel and (message or embed):
             return await channel.send(content=message, embed=embed, allowed_mentions=AllowedMentions.none())
 
@@ -119,47 +141,54 @@ class Artbot(Bot):
         if not self.shutting_down:
             Logging.info("Shutting down...")
             self.shutting_down = True
-            await Logging.bot_log(f"{self.my_name} is shutting down")
-            self.db_keepalive.cancel()
-            temp = []
-            for cog in self.cogs:
-                temp.append(cog)
-            for cog in temp:
-                Logging.info(f"unloading cog {cog}")
+            if self.db_keepalive:
+                self.db_keepalive.cancel()
+            await Tortoise.close_connections()
+            for cog in list(self.cogs):
+                Logging.info(f"{TCol.cWarning}unloading{TCol.cEnd} cog {TCol.cOkCyan}{cog}{TCol.cEnd}")
                 c = self.get_cog(cog)
                 if hasattr(c, "shutdown"):
                     await c.shutdown()
-                self.unload_extension(f"cogs.{cog}")
+                await self.unload_extension(f"cogs.{cog}")
+                Logging.info(f"\t{TCol.cWarning}unloaded{TCol.cEnd}")
+            Logging.info(f"{TCol.cWarning}cog unloading complete{TCol.cEnd}")
         return await super().close()
 
     async def on_command_error(bot, ctx: commands.Context, error):
         if isinstance(error, commands.BotMissingPermissions):
-            await ctx.send(error)
+            await ctx.send(str(error))
         elif isinstance(error, commands.CheckFailure):
             pass
         elif isinstance(error, commands.CommandOnCooldown):
             if ctx.command.name in ['krill']:
                 # commands in this list have custom cooldown handler
                 return
-            await ctx.send(error)
+            await ctx.send(str(error))
         elif isinstance(error, commands.MaxConcurrencyReached):
             await ctx.send(f"Too many people are using the `{ctx.invoked_with}` command right now. Try again later")
         elif isinstance(error, commands.MissingRequiredArgument):
-            param = list(ctx.command.params.values())[min(len(ctx.args) + len(ctx.kwargs), len(ctx.command.params))]
             bot.help_command.context = ctx
             await ctx.send(
-                f"{Emoji.get_chat_emoji('NO')} You are missing a required command argument: `{param._name}`\n{Emoji.get_chat_emoji('WRENCH')} Command usage: `{bot.help_command.get_command_signature(ctx.command)}`")
+                f"""
+{Emoji.get_chat_emoji('NO')} You are missing a required command argument: `{ctx.current_parameter.name}`
+{Emoji.get_chat_emoji('WRENCH')} Command usage: `{bot.help_command.get_command_signature(ctx.command)}`
+                """)
         elif isinstance(error, commands.BadArgument):
-            param = list(ctx.command.params.values())[min(len(ctx.args) + len(ctx.kwargs), len(ctx.command.params))]
             bot.help_command.context = ctx
             await ctx.send(
-                f"{Emoji.get_chat_emoji('NO')} Failed to parse the ``{param._name}`` param: ``{error}``\n{Emoji.get_chat_emoji('WRENCH')} Command usage: `{bot.help_command.get_command_signature(ctx.command)}`")
+                f"""
+{Emoji.get_chat_emoji('NO')} Failed to parse the ``{ctx.current_parameter.name}`` parameter: ``{error}``
+{Emoji.get_chat_emoji('WRENCH')} Command usage: `{bot.help_command.get_command_signature(ctx.command)}`
+                """)
         elif isinstance(error, commands.CommandNotFound):
             return
         elif isinstance(error, commands.UnexpectedQuoteError):
             bot.help_command.context = ctx
             await ctx.send(
-                f"{Emoji.get_chat_emoji('NO')} There are quotes in there that I don't like\n{Emoji.get_chat_emoji('WRENCH')} Command usage: `{bot.help_command.get_command_signature(ctx.command)}`")
+                f"""
+{Emoji.get_chat_emoji('NO')} There are quotes in there that I don't like
+{Emoji.get_chat_emoji('WRENCH')} Command usage: `{bot.help_command.get_command_signature(ctx.command)}`
+                """)
         else:
             await Utils.handle_exception("Command execution failed", bot,
                                          error.original if hasattr(error, "original") else error, ctx=ctx)
@@ -170,34 +199,32 @@ class Artbot(Bot):
 
     async def keepDBalive(self):
         while not self.is_closed():
-            Database.connection.connection().ping(True)
+            # simple query to ping the db
+            query = "select 1"
+            conn = Tortoise.get_connection("default")
+            await conn.execute_query(query)
             await asyncio.sleep(3600)
 
 
-def run_db_migrations():
-    dbv = int(Configuration.get_persistent_var('db_version', 0))
-    Logging.info(f"db version is {dbv}")
-    dbv_list = [f for f in glob.glob("db_migrations/db_migrate_*.py")]
-    dbv_pattern = re.compile(r'db_migrations/db_migrate_(\d+)\.py', re.IGNORECASE)
-    migration_count = 0
-    for filename in sorted(dbv_list):
-        # get the int version number from filename
-        version = int(re.match(dbv_pattern, filename)[1])
-        if version > dbv:
-            try:
-                Logging.info(f"--- running db migration version number {version}")
-                spec = importlib.util.spec_from_file_location(f"migrator_{version}", filename)
-                dbm = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(dbm)
-                Configuration.set_persistent_var('db_version', version)
-                migration_count = migration_count + 1
-            except Exception as e:
-                # throw a fit if it doesn't work
-                raise e
-    Logging.info(f"--- {migration_count if migration_count else 'no'} db migration{'' if migration_count == 1 else 's'} run")
+async def run_db_migrations():
+    try:
+        Logging.info(f'{TCol.cUnderline}{TCol.cOkBlue}######## dg migrations ########{TCol.cEnd}{TCol.cEnd}')
+        command = Command(tortoise_config=utils.tortoise_settings.TORTOISE_ORM, app='artbot')
+        await command.init()
+        result = await command.upgrade()
+        if result:
+            Logging.info(f"{TCol.cOkGreen}##### db migrations done: #####{TCol.cEnd}")
+            Logging.info(result)
+        else:
+            Logging.info(f"{TCol.cWarning}##### no migrations found #####{TCol.cEnd}")
+    except Exception as e:
+        Utils.get_embed_and_log_exception(f"DB migration failure", Utils.BOT, e)
+        exit()
+    Logging.info(f'{TCol.cOkGreen}###### end dg migrations ######{TCol.cEnd}')
 
 
 def before_send(event, hint):
+    # TODO: this is broken obvs becuase logger is named 'artbot' - used by sentry, but how?
     if event['level'] == "error" and 'logger' in event.keys() and event['logger'] == 'gearbot':
         return None  # we send errors manually, in a much cleaner way
     if 'exc_info' in hint:
@@ -218,48 +245,129 @@ def can_admin():
     return commands.check(predicate)
 
 
-if __name__ == '__main__':
+async def persistent_data_job(work_item: Configuration.PersistentAction):
+    """
+    Perform persistent data i/o job
+    :param work_item: Configuration.PersistentAction
+    :return:
+    """
+    Configuration.do_persistent_action(work_item)
+
+
+async def queue_worker(name, queue, job, shielded=False):
+    """
+    Generic queue worker
+    :param name:
+    :param queue: the queue to pull work items from
+    :param job: the job that will be done on work items
+    :param shielded: boolean indicating whether the job will be shielded from cancellation
+    :return:
+    """
+    global running
+    try:
+        Logging.info(f"\t{TCol.cOkGreen}start{TCol.cEnd} {TCol.cOkCyan}`{name}`{TCol.cEnd} worker")
+        while True:
+            # Get a work_item from the queue
+            work_item = await queue.get()
+            try:
+                if shielded:
+                    await shield(job(work_item))
+                else:
+                    await asyncio.create_task(job(work_item))
+            except asyncio.CancelledError:
+                Logging.info(f"job cancelled for worker {name}")
+                if not Utils.BOT.loaded:
+                    Logging.info(f"stopping worker {name}")
+                    raise
+                Logging.info(f"worker {name} continues")
+            except Exception as e:
+                await Utils.handle_exception("worker unexpected exception", Utils.BOT, e)
+            queue.task_done()
+    finally:
+        Logging.info(f"{name} worker is finished")
+        return
+
+
+async def main():
+    global running
+    running = True
     Logging.init()
-    Logging.info("Launching bot!")
+    Logging.info("Launching Artbot!")
+    my_token = Configuration.get_var("token")
 
     dsn = Configuration.get_var('SENTRY_DSN', '')
     dsn_env = Configuration.get_var('SENTRY_ENV', 'Dev')
     Logging.info(f"DSN info - dsn:{dsn} env:{dsn_env}")
+
     if dsn != '':
         sentry_sdk.init(dsn, before_send=before_send, environment=dsn_env, integrations=[AioHttpIntegration()])
 
-    # TODO: exception handling for db migration error
-    run_db_migrations()
-    Logging.info('dg migrations go')
-    Database.init()
-    Logging.info('db init go')
+    loop = asyncio.get_running_loop()
+    await run_db_migrations()
 
-    intents = Intents(members=True, messages=True, guilds=True, bans=True, emojis=True, presences=True, reactions=True)
-    loop = asyncio.get_event_loop()
+    Configuration.PERSISTENT_AIO_QUEUE = asyncio.Queue()
+    persistent_data_task = asyncio.create_task(
+        queue_worker("Persistent Queue",
+                     Configuration.PERSISTENT_AIO_QUEUE,
+                     persistent_data_job))
+
+    # start the client
     prefix = Configuration.get_var("bot_prefix")
+    intents = Intents(
+        members=True,
+        messages=True,
+        guild_messages=True,
+        dm_messages=True,
+        dm_typing=False,
+        guild_typing=False,
+        message_content=True,
+        guilds=True,
+        bans=True,
+        emojis_and_stickers=True,
+        presences=True,
+        reactions=True)
     artbot = Artbot(
+        loop=loop,
         command_prefix=commands.when_mentioned_or(prefix),
         case_insensitive=True,
-        intents=intents,
-        loop=loop)
-    Logging.info('artbot instantiated')
-    artbot.help_command = commands.DefaultHelpCommand(command_attrs=dict(name='halp', checks=[can_help]))
-
+        allowed_mentions=AllowedMentions(everyone=False, users=True, roles=False, replied_user=True),
+        intents=intents)
+    artbot.help_command = commands.DefaultHelpCommand(command_attrs=dict(name='snelp', checks=[can_help]))
     Utils.BOT = artbot
 
     try:
-        for signame in ('SIGINT', 'SIGTERM'):
-            loop.add_signal_handler(getattr(signal, signame), lambda: asyncio.ensure_future(artbot.close()))
+        for signal_name in ('SIGINT', 'SIGTERM'):
+            loop.add_signal_handler(getattr(signal, signal_name), lambda: asyncio.ensure_future(artbot.close()))
     except NotImplementedError:
         pass
 
     try:
-        loop.run_until_complete(artbot.start(Configuration.get_var("token")))
+        async with artbot:
+            await artbot.start(my_token)
     except KeyboardInterrupt:
         pass
     finally:
-        if not artbot.is_closed():
-            loop.run_until_complete(artbot.close())
-        loop.close()
+        Utils.BOT.loaded = False
+        running = False
+        Logging.info(f"{TCol.cWarning}shutdown finally?{TCol.cEnd}")
+        # Wait until all queued jobs are done, then cancel worker.
+        if Configuration.PERSISTENT_AIO_QUEUE.qsize() > 0:
+            Logging.info(f"there are {Configuration.PERSISTENT_AIO_QUEUE.qsize()} persistent data items left...")
+            await Configuration.PERSISTENT_AIO_QUEUE.join()
+        persistent_data_task.cancel("shutdown")
+        try:
+            await persistent_data_task
+        except asyncio.CancelledError:
+            pass
 
-    Logging.info("Shutdown complete")
+        if not artbot.is_closed():
+            await artbot.close()
+
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        Logging.info(f"{TCol.cOkGreen}Artbot shutdown complete{TCol.cEnd}")
