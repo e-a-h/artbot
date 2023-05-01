@@ -120,13 +120,17 @@ class Premium(BaseCog):
     async def list(self, ctx, *, tier_role: Role):
         # list requiremetns
         guild_row = await self.bot.get_guild_db_config(ctx.guild.id)
-        tier_row = await PremiumTier.get(roleid=tier_role.id, guild=guild_row)
+        try:
+            tier_row = await PremiumTier.get(roleid=tier_role.id, guild=guild_row)
+        except DoesNotExist:
+            await ctx.send("There are no tier for that role")
+            return
 
         reqs = []
         for r in await tier_row.requirements:
             reqs.append(f"```{r.name}:```{r.prompt}")
 
-        if not tier_row.requirements:
+        if not reqs:
             await ctx.send("There are no requirements in this tier.")
             return
 
