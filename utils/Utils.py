@@ -26,7 +26,9 @@ URL_MATCHER = re.compile(r'((?:https?://)[a-z0-9]+(?:[-._][a-z0-9]+)*\.[a-z]{2,5
                          re.IGNORECASE)
 EMOJI_MATCHER = re.compile('<(a?):([^: \n]+):([0-9]+)>')
 NUMBER_MATCHER = re.compile(r"\d+")
-INVITE_MATCHER = re.compile(r"(?:https?://)?(?:www\.)?(?:discord(?:\.| |\[?\(?\"?'?dot'?\"?\)?\]?)?(?:gg|io|me|li)|discord(?:app)?\.com/invite)/+((?:(?!https?)[\w\d-])+)", flags=re.IGNORECASE)
+INVITE_MATCHER = re.compile(
+    r"(?:https?://)?(?:www\.)?(?:discord(?:\.| |\[?\(?\"?'?dot'?\"?\)?\]?)?(?:gg|io|me|li)|discord(?:app)?\.com/invite)/+((?:(?!https?)[\w\d-])+)",
+    flags=re.IGNORECASE)
 
 welcome_channel = "welcome_channel"
 rules_channel = "rules_channel"
@@ -35,6 +37,11 @@ ro_art_channel = "ro_art_channel"
 entry_channel = "entry_channel"
 
 COLOR_LIME = 0xbefc03
+
+
+def get_home_guild():
+    return BOT.get_guild(Configuration.get_var("guild_id"))
+
 
 def validate_channel_name(channel_name):
     return channel_name in (welcome_channel, rules_channel, log_channel, ro_art_channel, entry_channel)
@@ -52,8 +59,8 @@ def get_chanconf_description(bot, guild_id):
 
 async def fetch_last_message_by_channel(channel):
     try:
-        last_message = await channel.history(limit=1).flatten()
-        return last_message[0]
+        messages = [message async for message in channel.history(limit=1)]
+        return messages[0]
     except NotFound:
         return None
 
@@ -66,11 +73,15 @@ def permission_official_ban(member_id):
     return permission_official(member_id, 'ban_members')
 
 
+def can_mod_official(ctx):
+    return permission_official_ban(ctx.author.id)
+
+
 def permission_official(member_id, permission_name):
     # ban permission on official server - sort of a hack to propagate perms
     # TODO: better permissions model
     try:
-        official_guild = BOT.get_guild(Configuration.get_var("guild_id"))
+        official_guild = get_home_guild()
         official_member = official_guild.get_member(member_id)
         return getattr(official_member.guild_permissions, permission_name)
     except Exception:
@@ -222,7 +233,7 @@ user_cache = OrderedDict()
 
 
 async def get_user(uid, fetch=True):
-    UserClass = namedtuple("UserClass", "name id discriminator bot avatar_url created_at is_avatar_animated mention")
+    UserClass = namedtuple("UserClass", "name id discriminator bot avatar created_at is_avatar_animated mention")
     user = BOT.get_user(uid)
     if user is None:
         if uid in known_invalid_users:
@@ -258,7 +269,9 @@ async def username(uid, fetch=True, clean=True):
 
 
 def get_member_log_name(member):
-    return f"{member.mention} {str(member)} ({member.id})"
+    if member:
+        return f"{member.mention} {str(member)} ({member.id})"
+    return "unknown user"
 
 
 async def clean(text, guild=None, markdown=True, links=True, emoji=True):
@@ -347,7 +360,8 @@ def save_to_buffer(buffer, data, ext="json", fields=None):
     elif ext == 'csv':
         csvwriter = csv.DictWriter(buffer, fieldnames=fields)
         csvwriter.writeheader()
-        csvwriter.writerows(data)
+        for row in data:
+            csvwriter.writerow(row)
 
 
 def to_pretty_time(seconds):
@@ -374,44 +388,105 @@ def to_pretty_time(seconds):
 
 
 def chunk_list_or_string(input_list, chunk_size):
+    '''
+    cut input into chunks, maximum size is `chunk_size` and return a generator that goes through every chunk.
+    chunks are contiguous and only last one may have length less than `chunk_size`
+    '''
     for i in range(0, len(input_list), chunk_size):
         yield input_list[i:i + chunk_size]
 
 
 def paginate(input, max_lines=20, max_chars=1900, prefix="", suffix=""):
+    '''
+    splits the given text input into a list of pages to fit in Discord messages.
+
+    Each page has provided prefix and suffix in it and is at most `max_chars` length, disregarding any leading and trailing whitespace.
+    len(page) in code may be longer because of trailing whitespace, which Discord removes
+
+    Parameters
+    -----
+    input : str
+            string of arbitrary length
+
+    max_chars : int
+        max number of characters per page. one page is meant to fit in one message, so should be a positive integer
+        less than the Discord message length a bot can send (2k characters right now).
+        recommend to set lower than max to leave some buffer for other additions
+
+    Returns
+    -------
+    a list of 0 or more non-empty strings
+    '''
     max_chars -= len(prefix) + len(suffix)
+    # max_chars is now max number of characters we can read from input that would fit in one page
     lines = str(input).splitlines(keepends=True)
     pages = []
     page = ""
     count = 0
 
     def add_page(content):
-        nonlocal pages
+        '''
+        adds on prefix and suffix to the given content and adds it as a page to the list.
+        length of `content` must be less that `max_chars`.
+        moves onto the next page by setting page to empty string
+        '''
+        nonlocal pages, page
         pages.append(f"{prefix}{content}{suffix}")
+        page = ""
 
+    # try to split pages on lines first
     for line in lines:
-        # if word is longer than available space > if word longer than max, split on char, else newpage = word
         if len(page) + len(line) > max_chars or count == max_lines:
-            # single 2k line, split smaller
+            # adding next line too long for this page, split by words
             words = line.split(" ")
             for word in words:
                 if len(page) + len(word) > max_chars:
+                    # adding next word is too long for this page.
+                    # want to reduce number of mid-word splits so just save this page and start new one for next word
                     if page:
                         add_page(page)
                         count += 1
+                    # if page would be too long and if word longer than max, split on char,
+                    # else we start next page: page = word
                     if len(word) > max_chars:
                         for chunk in chunk_list_or_string(word, max_chars):
                             page = f"{chunk} "
                             if len(chunk) == max_chars:
                                 add_page(page)
-                            # fall through here because this chunk doesn't fill the page yet
-                            continue
+                            # last chunk night not fill page, nothing to do in that case
                     else:
                         page = f"{word} "
                 else:
                     page += f"{word} "
         else:
             page += line
-    # append the last page
-    add_page(page)
+    # potential last page. only if it has content
+    if page:
+        add_page(page)
     return pages
+
+
+def closest_power2_log(num):
+    lower = int(math.floor(math.log2(num)))
+    upper = int(math.ceil(math.log2(num)))
+    lower_pow = 1 << lower
+    upper_pow = 1 << upper
+    if num < (lower_pow + upper_pow) / 2:
+        return lower_pow
+    return upper_pow
+
+
+def closest_power2_str(num):
+    # faster in small runs, slower overall
+    upper_exp = len(f"{num:b}")
+    lower_exp = upper_exp - 1
+    upper_pow = 1 << upper_exp
+    lower_pow = 1 << lower_exp
+    # use midpoint to decide which
+    if num < (lower_pow + upper_pow) / 2:
+        return lower_pow
+    return upper_pow
+
+
+def is_power_of_two(num):
+    return num and (not (num & (num - 1)))

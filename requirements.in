@@ -1,0 +1,12 @@
+aerich
+discord
+prometheus_client
+py3-validate-email
+python-slugify
+pytz
+pyyaml
+requests
+sentry-sdk
+tortoise-orm
+asyncmy
+setuptools

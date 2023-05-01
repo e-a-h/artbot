@@ -1,5 +1,4 @@
 import asyncio
-import csv
 import io
 import re
 from datetime import datetime
@@ -9,8 +8,8 @@ import pytz
 from pytz import UnknownTimeZoneError
 from discord import Role, AllowedMentions, Forbidden
 from discord.ext import commands, tasks
-from peewee import DoesNotExist
 from slugify import slugify
+from tortoise.exceptions import OperationalError, MultipleObjectsReturned, DoesNotExist, NoValuesFetched
 from validate_email import validate_email
 
 import utils.Utils
@@ -24,7 +23,7 @@ class Premium(BaseCog):
     def __init__(self, bot):
         super().__init__(bot)
 
-        self.guild_specific_lists = dict()
+        self.guild_reg_in_progress = dict()
 
         for guild in self.bot.guilds:
             self.init_guild(guild)
@@ -36,7 +35,7 @@ class Premium(BaseCog):
 
     def init_guild(self, guild):
         # init guild-specific dicts and lists
-        self.guild_specific_lists[guild.id] = []
+        self.guild_reg_in_progress[guild.id] = set()
         pass
 
     @tasks.loop(seconds=60)
@@ -64,7 +63,8 @@ class Premium(BaseCog):
     async def premium_tier(self, ctx):
         # list tiers
         tiers = []
-        for tier_row in self.bot.get_guild_db_config(ctx.guild.id).premium_tiers:
+        guild_row = await self.bot.get_guild_db_config(ctx.guild.id)
+        for tier_row in await guild_row.premium_tiers:
             tier_role = ctx.guild.get_role(tier_row.roleid)
             tiers.append(f"{tier_role.name} ({tier_role.id})")
         if not tiers:
@@ -82,13 +82,13 @@ class Premium(BaseCog):
     @requirement.command(aliases=["add"])
     @commands.guild_only()
     async def add_req(self, ctx, tier_role: Role, requirement_name, *, prompt):
-        guild_row = self.bot.get_guild_db_config(ctx.guild.id)
-        tier_row = PremiumTier.get(roleid=tier_role.id, guild=guild_row)
+        guild_row = await self.bot.get_guild_db_config(ctx.guild.id)
+        tier_row = await PremiumTier.get(roleid=tier_role.id, guild=guild_row)
         clean_name = requirement_name.replace(r'[^A-Za-z0-9]', '')
         if clean_name:
-            requirement, created = PremiumTierRequirement.get_or_create(tier=tier_row, name=clean_name)
+            requirement, created = await PremiumTierRequirement.get_or_create(tier=tier_row, name=clean_name)
             requirement.prompt = prompt
-            requirement.save()
+            await requirement.save()
             await ctx.send(f"I {'created' if created else 'updated'} a requirement prompt for the `{tier_role.name}` tier. "
                            f"New members will be prompted for {clean_name} with this message:\n"
                            f"{requirement.prompt}")
@@ -98,32 +98,32 @@ class Premium(BaseCog):
     @requirement.command(aliases=["remove"])
     @commands.guild_only()
     async def remove_req(self, ctx, tier_role: Role, requirement_name):
-        guild_row = self.bot.get_guild_db_config(ctx.guild.id)
-        tier_row = PremiumTier.get(roleid=tier_role.id, guild=guild_row)
+        guild_row = await self.bot.get_guild_db_config(ctx.guild.id)
+        tier_row = await PremiumTier.get(roleid=tier_role.id, guild=guild_row)
         clean_name = requirement_name.replace(r'[^A-Za-z0-9]', '')
-        if clean_name:
-            requirement = PremiumTierRequirement.get_or_none(tier=tier_row, name=clean_name)
-            requirement.delete_instance()
+        try:
+            requirement = await PremiumTierRequirement.get(tier=tier_row, name=clean_name)
+            await requirement.delete()
             await ctx.send(f"I deleted a requirement prompt for the `{tier_role.name}` tier. "
                            f"New members will no longer be prompted for {clean_name} with this message:\n"
                            f"{requirement.prompt}")
-            return
-        await ctx.send(f"I couldn't create a requirement with that name. I can only accept alphanumeric characters")
+        except (OperationalError, MultipleObjectsReturned, DoesNotExist):
+            await ctx.send(f"I couldn't delete a requirement with that name. I can only accept alphanumeric characters")
 
-    def get_guild_and_tier_rows(self, guild_id, tier_role_id):
+    async def get_guild_and_tier_rows(self, guild_id, tier_role_id):
         guild_row = self.bot.get_guild_db_config(guild_id)
-        tier_row = PremiumTier.get(roleid=tier_role_id, guild=guild_row)
+        tier_row = await PremiumTier.get(roleid=tier_role_id, guild=guild_row)
         return guild_row, tier_row
 
     @requirement.command()
     @commands.guild_only()
     async def list(self, ctx, *, tier_role: Role):
         # list requiremetns
-        guild_row = self.bot.get_guild_db_config(ctx.guild.id)
-        tier_row = PremiumTier.get(roleid=tier_role.id, guild=guild_row)
+        guild_row = await self.bot.get_guild_db_config(ctx.guild.id)
+        tier_row = await PremiumTier.get(roleid=tier_role.id, guild=guild_row)
 
         reqs = []
-        for r in tier_row.requirements:
+        for r in await tier_row.requirements:
             reqs.append(f"```{r.name}:```{r.prompt}")
 
         if not tier_row.requirements:
@@ -133,8 +133,9 @@ class Premium(BaseCog):
         req_list = "\n".join(reqs)
         await ctx.send(f"Requirements for the `{tier_role.name}` tier are:\n{req_list}")
 
-    def get_tier(self, role):
-        for tier_row in self.bot.get_guild_db_config(role.guild.id).premium_tiers:
+    async def get_tier_for_role(self, role: Role):
+        guild_row = await self.bot.get_guild_db_config(role.guild.id)
+        for tier_row in await guild_row.premium_tiers:
             if tier_row.roleid == role.id:
                 return tier_row
         return None
@@ -142,14 +143,14 @@ class Premium(BaseCog):
     @premium_tier.command(invoke_without_command=True)
     @commands.guild_only()
     async def members(self, ctx, *, tier_role: Role):
-        my_tier = self.get_tier(tier_role)
+        my_tier = await self.get_tier_for_role(tier_role)
         output = []
 
         if not my_tier:
             await ctx.send("No matching premium tier found in this server")
             return
 
-        for tier_member in my_tier.members:
+        for tier_member in await my_tier.members:
             output.append(utils.Utils.get_member_log_name(ctx.guild.get_member(tier_member.userid)))
 
         if not output:
@@ -162,18 +163,18 @@ class Premium(BaseCog):
     @premium_tier.command(aliases=["memberinfo"], invoke_without_command=True)
     @commands.guild_only()
     async def members_info(self, ctx, *, tier_role: Role):
-        my_tier = self.get_tier(tier_role)
+        my_tier = await self.get_tier_for_role(tier_role)
         output = []
 
         if not my_tier:
             await ctx.send("No matching premium tier found in this server")
             return
 
-        for tier_member in my_tier.members:
+        for tier_member in await my_tier.members:
             output.append(utils.Utils.get_member_log_name(ctx.guild.get_member(tier_member.userid)))
-            for req in my_tier.requirements:
+            for req in await my_tier.requirements:
                 line = f"\t__{req.name}:__ "
-                info = PremiumTierMemberInfo.get_or_none(requirementid=req.id, member=tier_member)
+                info = await PremiumTierMemberInfo.get_or_none(requirementid=req.id, member=tier_member)
                 if info is None:
                     line += "------"
                 else:
@@ -192,7 +193,7 @@ class Premium(BaseCog):
     @premium_tier.command(invoke_without_command=True)
     @commands.guild_only()
     async def export(self, ctx, *, tier_role: Role):
-        my_tier = self.get_tier(tier_role)
+        my_tier = await self.get_tier_for_role(tier_role)
         data = []
 
         if not my_tier:
@@ -200,14 +201,14 @@ class Premium(BaseCog):
             return
 
         fields = ["member"]
-        for req in my_tier.requirements:
+        for req in await my_tier.requirements:
             fields.append(req.name)
 
-        for tier_member in my_tier.members:
+        for tier_member in await my_tier.members:
             info_object = {"member": utils.Utils.get_member_log_name(ctx.guild.get_member(tier_member.userid))}
 
-            for req in my_tier.requirements:
-                info = PremiumTierMemberInfo.get_or_none(requirementid=req.id, member=tier_member)
+            for req in await my_tier.requirements:
+                info = await PremiumTierMemberInfo.get_or_none(requirementid=req.id, member=tier_member)
                 if info is None:
                     info_object[req.name] = "--"
                 else:
@@ -230,25 +231,26 @@ class Premium(BaseCog):
     @commands.guild_only()
     async def add(self, ctx, *, role: Role):
         # check for existing tier. if not, add role as tier
-        try:
-            existing = PremiumTier.get(roleid=role.id)
-            await ctx.send(f"A premium tier already exists for that role.")
-        except Exception:
-            guild_row = self.bot.get_guild_db_config(ctx.guild.id)
-            PremiumTier.create(roleid=role.id, guild=guild_row)
+        guild_row = await self.bot.get_guild_db_config(ctx.guild.id)
+        tier_row, created = await PremiumTier.get_or_create(roleid=role.id, guild=guild_row)
+        if created:
             await ctx.send(f"ok, '{role.mention}' is now recognized as a premium tier", allowed_mentions=AllowedMentions.none())
+        else:
+            await ctx.send(f"A premium tier already exists for that role.")
 
     @premium_tier.command()
     @commands.guild_only()
     async def remove(self, ctx, *, role: Role):
         # check for existing tier and remove.
         try:
-            existing = PremiumTier.get(roleid=role.id)
-            existing.delete_instance()
+            existing = await PremiumTier.get(roleid=role.id)
+            await existing.delete()
             await ctx.send(f"ok, '{role.mention}' is no longer recognized as a premium tier",
                            allowed_mentions=AllowedMentions.none())
-        except Exception:
+        except DoesNotExist:
             await ctx.send(f"No premium tier exists for that role.")
+        except OperationalError:
+            await ctx.send(f"Failed to delete tier for role `{role.name}`")
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild):
@@ -257,30 +259,38 @@ class Premium(BaseCog):
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
         # delete guild-specific dicts and lists, remove persistent vars, clean db
-        del self.guild_specific_lists[guild.id]
+        del self.guild_reg_in_progress[guild.id]
         pass
 
     @commands.command()
     @commands.dm_only()
     async def register(self, ctx):
         tier_count = 0
+
         for guild in self.bot.guilds:
+            if ctx.author.id in self.guild_reg_in_progress[guild.id]:
+                await ctx.send("You already have a tier registration in progress. "
+                               "Complete that first, or try again later")
+                return
+
             if member := guild.get_member(ctx.author.id):
-                for tier_row in self.bot.get_guild_db_config(guild.id).premium_tiers:
+                guild_row = await self.bot.get_guild_db_config(ctx.guild.id)
+                for tier_row in await guild_row.premium_tiers:
                     tier_role = guild.get_role(tier_row.roleid)
                     if tier_role in member.roles:
                         await self.welcome_tier_member(member, tier_row, tier_role)
                         tier_count += 1
+
         if not tier_count:
             await ctx.send(
                 "You don't appear to be a member of any premium tiers. If you have paid for premium access "
                 "and believe this message is in error, please contact a staff member")
 
-    async def welcome_tier_member(self, member, tier, role):
+    async def welcome_tier_member(self, member, tier: PremiumTier, role: Role):
         try:
-            requirements = tier.requirements  # PremiumTier.get(id=tier.id)
-        except:
-            await self.bot.guild_log(member.guild.id, f"No role requirements for `{tier.name}` tier. Nothing recorded "
+            requirements = await tier.requirements  # PremiumTier.get(id=tier.id)
+        except (OperationalError, NoValuesFetched):
+            await self.bot.guild_log(member.guild.id, f"No role requirements for `{role.name}` tier. Nothing recorded "
                                                       f"for new member {Utils.get_member_log_name(member)}")
             return
 
@@ -293,9 +303,9 @@ class Premium(BaseCog):
                            "For example, US Mountain Standard Time is `UTC-7`"
                 return True
 
-            def email_validator(input):
+            def email_validator(input_email):
                 is_valid = validate_email(
-                    email_address=input,
+                    email_address=input_email,
                     check_format=True,
                     check_blacklist=True,
                     check_dns=True,
@@ -335,17 +345,18 @@ class Premium(BaseCog):
                   "I'm a bot that gathers information to help Art Prof staff make sure they can fulfil your " \
                   "membership rewards. "
             await channel.send(msg)
+            self.guild_reg_in_progress[role.guild.id].add(member.id)
 
-            for requirement in tier.requirements:
+            for requirement in await tier.requirements:
                 msg = requirement.prompt
                 validator_name = f"{requirement.name}_validator"
                 validator = None
                 if validator_name in locals() and callable(tmp := locals()[validator_name]):
                     validator = tmp
 
-                guild_row = self.bot.get_guild_db_config(member.guild.id)
-                tier_member = PremiumTierMember.get(userid=member.id, tier=tier)
-                this_info, created = PremiumTierMemberInfo.get_or_create(
+                guild_row = await self.bot.get_guild_db_config(member.guild.id)
+                tier_member = await PremiumTierMember.get(userid=member.id, tier=tier)
+                this_info, created = await PremiumTierMemberInfo.get_or_create(
                     requirementid=requirement.id,
                     member=tier_member
                 )
@@ -383,19 +394,19 @@ class Premium(BaseCog):
                 )
 
                 this_info.value = answer
-                this_info.save()
+                await this_info.save()
 
             # msg = "Please tell me your physical mailing address:"
             # msg = "Please tell me your timezone offset (for example, UTC-7. google can help you find this):"
 
             if len(tier.requirements) > 1:
                 msg = "```Does all the information you provided look correct?```\n"
-                tier_member = PremiumTierMember.get(userid=member.id, tier=tier)
+                tier_member = await PremiumTierMember.get(userid=member.id, tier=tier)
                 output_list = []
 
-                for r in tier.requirements:
+                for r in await tier.requirements:
                     output = f"__**{r.name}:**__ "
-                    this_info = PremiumTierMemberInfo.get(member=tier_member, requirementid=r.id)
+                    this_info = await PremiumTierMemberInfo.get(member=tier_member, requirementid=r.id)
                     output += this_info.value
                     output_list.append(output)
 
@@ -450,17 +461,20 @@ class Premium(BaseCog):
             prefix = Configuration.get_var("bot_prefix")
             await self.bot.guild_log(
                 member.guild.id,
-                f"`{tier.name}` tier registration failed for {member.mention}"
+                f"`{role.name}` tier registration failed for {member.mention}"
             )
+        finally:
+            self.guild_reg_in_progress[role.guild.id].remove(member.id)
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
         tiers = []
-        for row in self.bot.get_guild_db_config(after.guild.id).premium_tiers:
+        guild_row = await self.bot.get_guild_db_config(after.guild.id)
+        for row in await guild_row.premium_tiers:
             tiers.append(row)
             tier_role = after.guild.get_role(row.roleid)
             if tier_role not in before.roles and tier_role in after.roles:
-                tier_member = PremiumTierMember.get_or_create(userid=after.id, tier=row.id)[0]
+                tier_member, created = await PremiumTierMember.get_or_create(userid=after.id, tier=row.id)
                 msg = f"added member {Utils.get_member_log_name(after)} to tier {tier_role.name}"
                 await self.bot.guild_log(after.guild.id, msg)
                 Logging.info(msg)
@@ -468,9 +482,9 @@ class Premium(BaseCog):
                 return
 
             if tier_role in before.roles and tier_role not in after.roles:
-                tier_member = PremiumTierMember.get_or_none(userid=after.id, tier=row.id)
+                tier_member = await PremiumTierMember.get_or_none(userid=after.id, tier=row.id)
                 if tier_member:
-                    tier_member.delete_instance(recursive=True)
+                    await tier_member.delete()
                     msg = f"removed member {Utils.get_member_log_name(after)} from tier {tier_role.name}"
                     await self.bot.guild_log(after.guild.id, msg)
                     Logging.info(msg)
@@ -482,5 +496,5 @@ class Premium(BaseCog):
         pass
 
 
-def setup(bot):
-    bot.add_cog(Premium(bot))
+async def setup(bot):
+    await bot.add_cog(Premium(bot))
