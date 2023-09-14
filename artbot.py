@@ -211,7 +211,7 @@ async def run_db_migrations():
         Logging.info(f'{TCol.cUnderline}{TCol.cOkBlue}######## dg migrations ########{TCol.cEnd}{TCol.cEnd}')
         command = Command(tortoise_config=utils.tortoise_settings.TORTOISE_ORM, app='artbot')
         await command.init()
-        result = await command.upgrade()
+        result = await command.upgrade(False)
         if result:
             Logging.info(f"{TCol.cOkGreen}##### db migrations done: #####{TCol.cEnd}")
             Logging.info(result)
