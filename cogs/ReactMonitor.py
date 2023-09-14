@@ -1,21 +1,25 @@
+import typing
 from datetime import datetime
 
+from discord.ext.commands import Greedy
 from tortoise.exceptions import OperationalError
 
+import utils.Configuration
 from utils.Database import ReactWatch, WatchedEmoji, Guild
 
 import discord
-from discord import NotFound, HTTPException
+from discord import NotFound, HTTPException, Forbidden, TextChannel
 from discord.ext import commands, tasks
 
 from cogs.BaseCog import BaseCog
-from utils import Utils, Configuration, Lang
+from utils import Utils, Configuration, Lang, Logging
 
 
 class ReactMonitor(BaseCog):
 
     def __init__(self, bot):
         super().__init__(bot)
+        self.excluded_channels_key = "react_watch_excluded_channels"
         self.react_watch_servers = set()
         self.min_react_lifespan = dict()
         self.recent_reactions = dict()
@@ -264,6 +268,74 @@ class ReactMonitor(BaseCog):
 
         await ctx.send(f"`{emoji}` is now on the watch list with settings:\n"
                        f"{self.describe_emoji_watch_settings(self.emoji[ctx.guild.id][emoji])}")
+
+    @react_monitor.command(aliases=["rbu", "removebyuser"])
+    @commands.guild_only()
+    async def remove_by_user(
+            self,
+            ctx: commands.Context,
+            target: discord.User,
+            count: int = 200,
+            check: typing.Union[discord.TextChannel, bool] = True):
+        channels = ctx.guild.channels if check is True else [check]
+        excluded_channels = utils.Configuration.get_persistent_var(self.excluded_channels_key, [])
+        for channel in channels:
+            if isinstance(channel, TextChannel):
+                if channel.id in excluded_channels:
+                    await ctx.send(f"<#{channel.id}> skipped")
+                    continue
+                try:
+                    await ctx.send(f"checking <#{channel.id}>...")
+                    async for message in channel.history(limit=count):
+                        for react in message.reactions:
+                            async for user in react.users():
+                                if user.id == target.id:
+                                    await message.clear_reaction(react.emoji)
+                                    await ctx.send(
+                                        f"react {react.emoji} by userid ({user.id}) "
+                                        f"removed from message {message.jump_url}")
+                                    continue
+                except Forbidden:
+                    await ctx.send(f"I can't access message history in channel <#{channel.id}>")
+        await ctx.send("All done cleaning reacts")
+
+    @react_monitor.command(aliases=["excludechannel"])
+    @commands.guild_only()
+    async def exclude_channel(self, ctx, channels: Greedy[discord.TextChannel]):
+        """
+        Exclude channel from checks for react spam
+        :param ctx:
+        :param channels:
+        :return:
+        """
+        excluded_channels = utils.Configuration.get_persistent_var(self.excluded_channels_key, [])
+        excluded_channels = set(excluded_channels)
+        added = []
+        for channel in channels:
+            if channel.id not in excluded_channels:
+                excluded_channels.add(channel.id)
+                added.append(channel.mention)
+        utils.Configuration.set_persistent_var(self.excluded_channels_key, list(excluded_channels))
+        await ctx.send(f"Added {' '.join(added)} to react spam channel exclusion list")
+
+    @react_monitor.command(aliases=["unexcludechannel"])
+    @commands.guild_only()
+    async def unexclude_channel(self, ctx, channels: Greedy[discord.TextChannel]):
+        """
+        Exclude channel from checks for react spam
+        :param ctx:
+        :param channel:
+        :return:
+        """
+        excluded_channels = utils.Configuration.get_persistent_var(self.excluded_channels_key, [])
+        excluded_channels = set(excluded_channels)
+        removed = []
+        for channel in channels:
+            if channel.id in excluded_channels:
+                excluded_channels.remove(channel.id)
+                removed.append(channel.mention)
+        utils.Configuration.set_persistent_var(self.excluded_channels_key, list(excluded_channels))
+        await ctx.send(f"Removed {' '.join(removed)} from react spam channel exclusion list")
 
     @react_monitor.command(aliases=["rem", "del", "delete"])
     @commands.guild_only()
